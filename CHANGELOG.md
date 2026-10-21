@@ -77,3 +77,8 @@ Services = WA-01, Selected work = WA-02 (later removed), Principles = WA-03, Abo
   - The toggle's `aria-label` and `aria-pressed` update on every click.
 - Checked both modes across the whole page in headless Chrome. The contact band keeps its blue gradient in both modes by design.
 - **Not yet applied to** the dashboard (`onboarding-dashboard/`) and the Finnish course (`finnish-course/`), which have their own styles.
+
+## Rename: LUMOVO to LUMOVO-EDU
+
+- Brand name changed to **LUMOVO-EDU** (an "illumination" name with an education tag) everywhere it is visible: header wordmark, footer, page title and meta description, hero and section copy, the header link's aria-label, the Finnish course brand lines, and the README.
+- Deliberately **not** renamed, because renaming would break code or data: the `lumovo-theme` and `lumovo.arrival.*` storage keys, the `window.LUMOVO_DESTINATIONS` / `LUMOVO_JOURNEY` / `LumovoArt` identifiers, GitHub and email addresses, and the historical entries above in this file.

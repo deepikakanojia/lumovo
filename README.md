@@ -1,6 +1,6 @@
 # LUMOVO
 
-**LUMOVO: Learning Intelligence & Transformation.** The landing page and showcase projects of an independent learning intelligence practice, founded by Deepika Kanojia. It brings together learning design, educational technology, AI, analytics and automation.
+**LUMOVO-EDU: Learning Intelligence & Transformation.** The landing page and showcase projects of an independent learning intelligence practice, founded by Deepika Kanojia. It brings together learning design, educational technology, AI, analytics and automation.
 
 Everything here is **static**: plain HTML, CSS and vanilla JavaScript. There is no build step, no framework and no server. Open a page in a browser and it works.
 

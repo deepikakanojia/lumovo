@@ -1,6 +1,6 @@
 Status: DRAFT
 
-# Your first hour in Finland (Survival Finnish by Lumovo)
+# Your first hour in Finland (Survival Finnish by LUMOVO-EDU)
 
 A static, no-build learning page. Plain HTML, CSS and vanilla JS. No external requests. It also works when `index.html` is opened directly from disk.
 
