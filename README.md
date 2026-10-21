@@ -39,6 +39,9 @@ Lumovo/
 │   ├── data/destinations.js    Destination data for the guide
 │   └── README.md               Course documentation
 │
+├── design-explorations/        Throw-away design previews (not part of the live site)
+│   └── orb-variants.html       Hero visual options (bulb, ripples, L monograms)
+│
 ├── README.md                   This file
 ├── CHANGELOG.md                Detailed log of changes
 ├── TODO.md                     Open work
@@ -85,6 +88,7 @@ Sections of `index.html` are referred to by **working area (WA)** number. The HT
 - **Tokens:** colours, radius and shadow are CSS variables on `:root` at the top of the `<style>` block.
 - **Container:** every section uses `.wrap`: full width, side padding `clamp(10px, 2.5vw, 48px)`, capped at 1680px.
 - **Images:** all three WA-01 thumbnails use one **3:2** frame (`.pane-thumb`) with `object-fit: contain`, so nothing is cropped. Rounded corners are allowed.
+- **Light / dark mode:** colours are CSS tokens on `:root`, overridden by `:root[data-theme="dark"]`. The nav toggle saves the choice in `localStorage` (`lumovo-theme`); first visit follows the system setting.
 - **Responsive:** below 800px the nav links hide and grids collapse to one column. WA-01 columns stack with horizontal dividers.
 - **Accessibility:** reduced-motion is honoured. Links have labels and images have alt text.
 - **Links:** every link to local content is relative.

@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LUMOVO hero visual: variants</title>
+<!--
+  Design exploration, NOT part of the live site.
+  Six light / illumination takes on the hero orb. Same palette as index.html
+  (blue #2563eb, cyan #00b4d8, soft #e0f2fe). Pure CSS + inline SVG, no images.
+  Pick one by number; it will be moved into index.html's .hero.
+-->
+<style>
+  :root{--blue:#2563eb;--cyan:#00b4d8;--ink:#0f172a;--muted:#526078;--soft:#e0f2fe;--mist:#f8fafc;--glow:#fff7d6}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:linear-gradient(137deg,#f8fafc,#e6f7ff);line-height:1.5}
+  header{padding:40px clamp(16px,4vw,48px) 8px}
+  h1{margin:0 0 6px;font-size:1.6rem;letter-spacing:-.03em}
+  header p{margin:0;color:var(--muted);max-width:60ch}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:22px;padding:24px clamp(16px,4vw,48px) 60px}
+  .card{background:rgba(255,255,255,.7);border:1px solid #dbe5f1;border-radius:22px;padding:22px;display:flex;flex-direction:column;align-items:center}
+  .stage{width:100%;max-width:300px;aspect-ratio:1;position:relative;display:grid;place-items:center}
+  .label{margin-top:14px;text-align:center}
+  .label b{display:block;font-size:1rem}
+  .label span{font-size:.85rem;color:var(--muted)}
+  .num{font-size:.72rem;font-weight:800;letter-spacing:.12em;color:var(--cyan);text-transform:uppercase}
+
+  /* 1 · GLOW CORE: the original sphere, but lit from inside by a warm-white core */
+  .v1 .sphere{width:78%;aspect-ratio:1;border-radius:50%;position:relative;
+    background:radial-gradient(circle at 50% 50%,#fff 0 10%,var(--glow) 18%,#bfeaf6 42%,#5b9cf0 74%,var(--blue) 100%);
+    box-shadow:inset -18px -22px 44px rgba(15,23,42,.18),0 0 70px 14px rgba(125,211,252,.55),0 40px 70px rgba(37,99,235,.2);
+    animation:pulse 4s ease-in-out infinite}
+  .v1 .sphere:before,.v1 .sphere:after{content:"";position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,.7)}
+  .v1 .sphere:before{inset:14%}.v1 .sphere:after{inset:30%}
+
+  /* 2 · BULB LINE: a luminous bulb with a glowing filament inside a soft blue disc */
+  .v2 .disc{position:absolute;width:78%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle at 35% 25%,#fff 0 4%,#d9f4fb 30%,#a5dceb 62%,#6aa5f2);box-shadow:0 30px 60px rgba(37,99,235,.22)}
+  .v2 svg{position:relative;width:52%;overflow:visible}
+
+  /* 3 · LUMEN RIPPLES: light radiating outward from a bright centre */
+  .v3 .core{width:30%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle,#fff 0 35%,var(--glow) 60%,#8fd8ee);box-shadow:0 0 50px 14px rgba(255,255,255,.95),0 0 90px 30px rgba(56,189,248,.5);position:relative;z-index:2}
+  .v3 i{position:absolute;inset:0;margin:auto;width:30%;aspect-ratio:1;border-radius:50%;border:2px solid rgba(37,99,235,.35);animation:ripple 4.5s ease-out infinite}
+  .v3 i:nth-child(2){animation-delay:1.5s}.v3 i:nth-child(3){animation-delay:3s}
+
+  /* 4 · SUNBURST: soft conic rays behind a glossy sphere (illumination) */
+  .v4 .rays{position:absolute;inset:-4%;border-radius:50%;
+    background:repeating-conic-gradient(from 0deg,rgba(0,180,216,.28) 0 7deg,transparent 7deg 20deg);
+    -webkit-mask:radial-gradient(circle,transparent 30%,#000 38%,transparent 72%);mask:radial-gradient(circle,transparent 30%,#000 38%,transparent 72%);
+    animation:spin 40s linear infinite}
+  .v4 .sphere{width:52%;aspect-ratio:1;border-radius:50%;position:relative;
+    background:radial-gradient(circle at 38% 30%,#fff 0 6%,#eaf9ff 24%,#7fd0ec 62%,var(--blue));
+    box-shadow:inset -12px -14px 28px rgba(15,23,42,.2),0 0 60px 10px rgba(125,211,252,.6)}
+
+  /* 5 · BULB GLASS: glossy glass bulb with a screw base, sits on the soft background */
+  .v5 svg{width:62%;overflow:visible;filter:drop-shadow(0 24px 30px rgba(37,99,235,.25))}
+  .v5 .halo{position:absolute;width:80%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle,rgba(255,247,214,.9),rgba(125,211,252,.35) 50%,transparent 70%);animation:pulse 4s ease-in-out infinite}
+
+  /* 6 · SPARK: sphere with a four-point idea-spark where the highlight was */
+  .v6 .sphere{width:78%;aspect-ratio:1;border-radius:50%;position:relative;
+    background:radial-gradient(circle at 35% 25%,#fff 0 4%,#d9f4fb 22%,#a5dceb 50%,var(--blue) 100%);
+    box-shadow:inset -22px -26px 50px rgba(15,23,42,.22),0 40px 70px rgba(37,99,235,.2)}
+  .v6 .spark{position:absolute;left:26%;top:20%;width:26%;aspect-ratio:1;transform:translate(-50%,-50%);animation:twinkle 3s ease-in-out infinite}
+
+  /* ===== L MONOGRAM SET: the letter L worked into the light idea ===== */
+  .sec{padding:8px clamp(16px,4vw,48px) 0}
+  .sec h2{margin:0 0 4px;font-size:1.3rem;letter-spacing:-.02em}
+  .sec p{margin:0;color:var(--muted);max-width:60ch}
+  .lg svg{position:relative;width:100%;overflow:visible}
+  .lg .base{position:absolute;width:78%;aspect-ratio:1;border-radius:50%}
+  .lg.dark .base{background:radial-gradient(circle at 35% 25%,#7fb4ff 0 4%,#4a86f0 30%,#2563eb 62%,#1e3a8a);box-shadow:0 30px 60px rgba(37,99,235,.3)}
+  .lg.light .base{background:radial-gradient(circle at 35% 25%,#fff 0 4%,#d9f4fb 30%,#a5dceb 62%,#6aa5f2);box-shadow:0 30px 60px rgba(37,99,235,.22)}
+  .lg .glowy{animation:breathe 4s ease-in-out infinite}
+
+
+  /* ===== RIPPLE BULB SET: solid gradient bulb whose glass is filled with ripples ===== */
+  .rb .stage svg.bulb{position:absolute;left:27%;top:27.9%;width:46%;overflow:visible;filter:drop-shadow(0 18px 24px rgba(37,99,235,.28))}
+  .rb .out{position:absolute;left:50%;top:50%;width:46%;aspect-ratio:1;margin:-23% 0 0 -23%;border-radius:50%;border:2px solid rgba(37,99,235,.32);animation:ripple 4.8s ease-out infinite}
+  .rb .out:nth-of-type(2){animation-delay:1.6s}.rb .out:nth-of-type(3){animation-delay:3.2s}
+  .rb .in{transform-box:fill-box;transform-origin:center;animation:rin 4.8s ease-out infinite}
+  .rb .in:nth-of-type(2){animation-delay:1.6s}.rb .in:nth-of-type(3){animation-delay:3.2s}
+  @keyframes rin{0%{transform:scale(.2);opacity:.95}100%{transform:scale(1.5);opacity:0}}
+
+  /* ===== MERGE SET: Option 2 (line-art bulb) + Option 3 (lumen ripples) ===== */
+  .mg .stage svg.bulb{position:absolute;left:22%;top:22.6%;width:56%;overflow:visible;z-index:2}
+  .mg .rip{position:absolute;left:50%;top:50%;width:26%;aspect-ratio:1;margin:-13% 0 0 -13%;border-radius:50%;border:3px solid rgba(37,99,235,.55);animation:ripple-far 4.8s ease-out infinite;z-index:1}
+  .mg .rip:nth-of-type(2){animation-delay:1.6s}.mg .rip:nth-of-type(3){animation-delay:3.2s}
+  .mg .halo{position:absolute;left:50%;top:50%;width:70%;aspect-ratio:1;margin:-35% 0 0 -35%;border-radius:50%;background:radial-gradient(circle,rgba(255,247,214,.85),rgba(125,211,252,.3) 45%,transparent 70%);animation:pulse 4s ease-in-out infinite}
+  .mg .disc2{position:absolute;width:62%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle at 35% 25%,#fff 0 4%,#d9f4fb 30%,#a5dceb 62%,#6aa5f2);box-shadow:0 30px 60px rgba(37,99,235,.22);z-index:0}
+  @keyframes ripple-far{0%{transform:scale(1);opacity:.9}100%{transform:scale(6.4);opacity:0}}
+  @keyframes breathe{0%,100%{opacity:.7}50%{opacity:1}}
+  @keyframes pulse{0%,100%{transform:scale(1);filter:brightness(1)}50%{transform:scale(1.03);filter:brightness(1.08)}}
+  @keyframes ripple{0%{transform:scale(1);opacity:.9}100%{transform:scale(3.2);opacity:0}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes twinkle{0%,100%{opacity:.75;transform:translate(-50%,-50%) scale(.9) rotate(0)}50%{opacity:1;transform:translate(-50%,-50%) scale(1.1) rotate(8deg)}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Hero visual: light &amp; illumination variants</h1>
+  <p>LUMOVO draws on <em>lumen</em>, light. Each option keeps the blue / cyan palette and the glassy feel of the current orb. Tell me a number to use it on the landing page.</p>
+</header>
+
+<main class="grid">
+
+  <article class="card v1">
+    <div class="stage"><div class="sphere"></div></div>
+    <div class="label"><div class="num">Option 1</div><b>Glow core</b><span>Today's sphere, lit from within. Closest to the current design.</span></div>
+  </article>
+
+  <article class="card v2">
+    <div class="stage">
+      <div class="disc"></div>
+      <svg viewBox="0 0 200 240" aria-hidden="true">
+        <defs>
+          <radialGradient id="g2" cx="50%" cy="42%" r="55%"><stop offset="0" stop-color="#fff"/><stop offset=".5" stop-color="#fff7d6"/><stop offset="1" stop-color="#bfeaf6" stop-opacity=".6"/></radialGradient>
+          <filter id="b2"><feGaussianBlur stdDeviation="6"/></filter>
+        </defs>
+        <circle cx="100" cy="98" r="60" fill="#fff7d6" opacity=".9" filter="url(#b2)"/>
+        <path d="M100 20C58 20 30 52 30 92c0 28 16 46 32 62 8 8 10 16 10 26h56c0-10 2-18 10-26 16-16 32-34 32-62 0-40-28-72-70-72z" fill="url(#g2)" stroke="#2563eb" stroke-width="5" stroke-linejoin="round"/>
+        <path d="M80 152v-40q10-18 20 0t20 0v40" fill="none" stroke="#2563eb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="74" y="184" width="52" height="12" rx="6" fill="#2563eb"/>
+        <rect x="80" y="200" width="40" height="12" rx="6" fill="#00b4d8"/>
+        <rect x="90" y="216" width="20" height="10" rx="5" fill="#2563eb"/>
+      </svg>
+    </div>
+    <div class="label"><div class="num">Option 2</div><b>Bulb, line art</b><span>A clear "idea" bulb with a glowing filament on the original disc.</span></div>
+  </article>
+
+  <article class="card v3">
+    <div class="stage"><i></i><i></i><i></i><div class="core"></div></div>
+    <div class="label"><div class="num">Option 3</div><b>Lumen ripples</b><span>A bright source sending light outward. Calm, minimal, very "brand".</span></div>
+  </article>
+
+  <article class="card v4">
+    <div class="stage"><div class="rays"></div><div class="sphere"></div></div>
+    <div class="label"><div class="num">Option 4</div><b>Sunburst</b><span>Soft rays slowly turn behind a glossy sphere. Feels like illumination.</span></div>
+  </article>
+
+  <article class="card v5">
+    <div class="stage">
+      <div class="halo"></div>
+      <svg viewBox="0 0 200 240" aria-hidden="true">
+        <defs>
+          <radialGradient id="g5" cx="40%" cy="30%" r="80%"><stop offset="0" stop-color="#fff"/><stop offset=".3" stop-color="#e6f7ff"/><stop offset=".7" stop-color="#8fd3ee"/><stop offset="1" stop-color="#2563eb"/></radialGradient>
+          <radialGradient id="c5" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#fff"/><stop offset=".6" stop-color="#fff3bf"/><stop offset="1" stop-color="#fff3bf" stop-opacity="0"/></radialGradient>
+          <linearGradient id="m5" x1="0" x2="1"><stop offset="0" stop-color="#1d4ed8"/><stop offset=".5" stop-color="#60a5fa"/><stop offset="1" stop-color="#1d4ed8"/></linearGradient>
+        </defs>
+        <path d="M100 14C56 14 26 48 26 92c0 30 16 48 32 64 9 9 12 16 12 26h60c0-10 3-17 12-26 16-16 32-34 32-64 0-44-30-78-74-78z" fill="url(#g5)"/>
+        <circle cx="100" cy="96" r="44" fill="url(#c5)"/>
+        <path d="M82 150v-38q9-16 18 0t18 0v38" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity=".95"/>
+        <ellipse cx="68" cy="52" rx="10" ry="18" transform="rotate(30 68 52)" fill="#fff" opacity=".7"/>
+        <rect x="68" y="184" width="64" height="14" rx="7" fill="url(#m5)"/>
+        <rect x="72" y="202" width="56" height="12" rx="6" fill="url(#m5)"/>
+        <rect x="86" y="218" width="28" height="12" rx="6" fill="url(#m5)"/>
+      </svg>
+    </div>
+    <div class="label"><div class="num">Option 5</div><b>Glass bulb</b><span>A glossy, filled bulb with a warm glow. The most literal "light".</span></div>
+  </article>
+
+  <article class="card v6">
+    <div class="stage">
+      <div class="sphere">
+        <svg class="spark" viewBox="0 0 100 100" aria-hidden="true"><path d="M50 0C54 32 68 46 100 50 68 54 54 68 50 100 46 68 32 54 0 50 32 46 46 32 50 0z" fill="#fff"/></svg>
+      </div>
+    </div>
+    <div class="label"><div class="num">Option 6</div><b>Spark</b><span>The current sphere with a twinkling spark of insight where the highlight is.</span></div>
+  </article>
+
+</main>
+
+<header class="sec">
+  <h2>Adding the "L"</h2>
+  <p>Five ways to put the L of LUMOVO into the light. Pick a letter treatment by its code (L1 to L5); it can be combined with any shape above.</p>
+</header>
+
+<main class="grid">
+
+  <!-- L1: the bulb's filament is drawn as an L -->
+  <article class="card lg light">
+    <div class="stage">
+      <div class="base"></div>
+      <svg viewBox="0 0 200 240" style="width:52%" aria-hidden="true">
+        <defs>
+          <radialGradient id="l1g" cx="50%" cy="42%" r="55%"><stop offset="0" stop-color="#fff"/><stop offset=".5" stop-color="#fff7d6"/><stop offset="1" stop-color="#bfeaf6" stop-opacity=".6"/></radialGradient>
+          <filter id="l1b"><feGaussianBlur stdDeviation="5"/></filter>
+        </defs>
+        <circle cx="100" cy="98" r="60" fill="#fff7d6" opacity=".9" filter="url(#l1b)"/>
+        <path d="M100 20C58 20 30 52 30 92c0 28 16 46 32 62 8 8 10 16 10 26h56c0-10 2-18 10-26 16-16 32-34 32-62 0-40-28-72-70-72z" fill="url(#l1g)" stroke="#2563eb" stroke-width="5" stroke-linejoin="round"/>
+        <path d="M86 70v78h36" fill="none" stroke="#f59e0b" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" opacity=".5" filter="url(#l1b)"/>
+        <path d="M86 70v78h36" fill="none" stroke="#2563eb" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="74" y="184" width="52" height="12" rx="6" fill="#2563eb"/><rect x="80" y="200" width="40" height="12" rx="6" fill="#00b4d8"/><rect x="90" y="216" width="20" height="10" rx="5" fill="#2563eb"/>
+      </svg>
+    </div>
+    <div class="label"><div class="num">L1</div><b>Filament L</b><span>The glowing filament inside the bulb is the letter L. Subtle and clever.</span></div>
+  </article>
+
+  <!-- L2: neon tube L on a deep blue sphere -->
+  <article class="card lg dark">
+    <div class="stage">
+      <div class="base"></div>
+      <svg viewBox="0 0 200 200" style="width:60%" aria-hidden="true">
+        <defs><filter id="l2b" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="9"/></filter></defs>
+        <path d="M74 46v100h62" fill="none" stroke="#7dd3fc" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" filter="url(#l2b)" class="glowy"/>
+        <path d="M74 46v100h62" fill="none" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="label"><div class="num">L2</div><b>Neon L</b><span>A glowing light-tube L on a deep blue sphere. Bold and very readable.</span></div>
+  </article>
+
+  <!-- L3: the stem of the L is a post, its foot is a ray of light -->
+  <article class="card lg dark">
+    <div class="stage">
+      <div class="base"></div>
+      <svg viewBox="0 0 200 200" style="width:70%" aria-hidden="true">
+        <defs>
+          <linearGradient id="l3r" x1="0" x2="1"><stop offset="0" stop-color="#fff"/><stop offset=".55" stop-color="#bfeaf6" stop-opacity=".8"/><stop offset="1" stop-color="#7dd3fc" stop-opacity="0"/></linearGradient>
+          <filter id="l3b" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="7"/></filter>
+        </defs>
+        <rect x="52" y="44" width="20" height="104" rx="10" fill="#fff"/>
+        <path d="M62 138h110l-14 10H62z" fill="url(#l3r)" filter="url(#l3b)" opacity=".9"/>
+        <path d="M62 138h112v20H62z" fill="url(#l3r)"/>
+        <circle cx="62" cy="52" r="11" fill="#fff7d6" class="glowy"/>
+      </svg>
+    </div>
+    <div class="label"><div class="num">L3</div><b>L with a light beam</b><span>A solid stem with a glowing lamp on top; the foot of the L is the beam it casts.</span></div>
+  </article>
+
+  <!-- L4: the orb sits in the elbow of the L, like light in a corner -->
+  <article class="card lg light">
+    <div class="stage">
+      <svg viewBox="0 0 200 200" style="width:84%" aria-hidden="true">
+        <defs>
+          <linearGradient id="l4g" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#2563eb"/><stop offset="1" stop-color="#00b4d8"/></linearGradient>
+          <radialGradient id="l4o" cx="38%" cy="30%" r="75%"><stop offset="0" stop-color="#fff"/><stop offset=".3" stop-color="#fff7d6"/><stop offset=".75" stop-color="#9fdcf0"/><stop offset="1" stop-color="#4a86f0"/></radialGradient>
+          <filter id="l4b" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="10"/></filter>
+        </defs>
+        <path d="M54 26h28v114h88v30H54z" fill="url(#l4g)"/>
+        <circle cx="116" cy="108" r="42" fill="#fff7d6" opacity=".85" filter="url(#l4b)" class="glowy"/>
+        <circle cx="116" cy="108" r="26" fill="url(#l4o)" stroke="#fff" stroke-width="2"/>
+        <circle cx="116" cy="108" r="14" fill="none" stroke="#fff" stroke-opacity=".8"/>
+      </svg>
+    </div>
+    <div class="label"><div class="num">L4</div><b>Orb in the corner</b><span>A bold gradient L with the glowing orb tucked into its elbow. Closest to your current orb.</span></div>
+  </article>
+
+  <!-- L5: sunburst with the L in the middle -->
+  <article class="card lg dark v4">
+    <div class="stage">
+      <div class="rays"></div>
+      <div class="base" style="width:54%;background:radial-gradient(circle at 38% 30%,#fff 0 6%,#eaf9ff 24%,#7fd0ec 62%,#2563eb);box-shadow:inset -12px -14px 28px rgba(15,23,42,.2),0 0 60px 10px rgba(125,211,252,.6)"></div>
+      <svg viewBox="0 0 100 100" style="position:absolute;width:34%" aria-hidden="true">
+        <path d="M34 18v50h36" fill="none" stroke="#1e3a8a" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="label"><div class="num">L5</div><b>Sunburst L</b><span>Deep blue L at the heart of a glowing sphere with slow turning rays. Reads like a badge or app icon.</span></div>
+  </article>
+
+</main>
+
+<header class="sec">
+  <h2>Ripple bulb</h2>
+  <p>Your chosen ripples, combined with a solid gradient bulb. The shape is an original drawing in LUMOVO's blue and cyan, with ripples spreading from the filament point both inside the glass and out into the page. Fully original artwork.</p>
+</header>
+
+<main class="grid">
+  <article class="card rb">
+    <div class="stage">
+      <i class="out"></i><i class="out"></i><i class="out"></i>
+      <svg class="bulb" viewBox="0 0 200 240" aria-hidden="true">
+        <defs>
+          <linearGradient id="bgR1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00b4d8"/><stop offset="1" stop-color="#2563eb"/></linearGradient>
+          <linearGradient id="bsR1" x1="0" x2="1"><stop offset="0" stop-color="#1d4ed8"/><stop offset=".5" stop-color="#38bdf8"/><stop offset="1" stop-color="#1d4ed8"/></linearGradient>
+          <clipPath id="cpR1"><path d="M100 20C58 20 30 52 30 92c0 28 16 46 32 62 8 8 10 16 10 26h56c0-10 2-18 10-26 16-16 32-34 32-62 0-40-28-72-70-72z"/></clipPath>
+        </defs>
+        <path d="M100 20C58 20 30 52 30 92c0 28 16 46 32 62 8 8 10 16 10 26h56c0-10 2-18 10-26 16-16 32-34 32-62 0-40-28-72-70-72z" fill="url(#bgR1)"/>
+        <g clip-path="url(#cpR1)"><circle cx="100" cy="100" r="13" fill="#fff"/><circle cx="100" cy="100" r="32" fill="none" stroke="#fff" stroke-width="5" opacity=".85"/><circle cx="100" cy="100" r="52" fill="none" stroke="#fff" stroke-width="5" opacity=".55"/><circle cx="100" cy="100" r="72" fill="none" stroke="#fff" stroke-width="5" opacity=".3"/></g>
+        <rect x="70" y="186" width="60" height="13" rx="6.5" fill="url(#bsR1)"/>
+        <rect x="76" y="203" width="48" height="12" rx="6" fill="url(#bsR1)"/>
+        <rect x="88" y="219" width="24" height="11" rx="5.5" fill="url(#bsR1)"/>
+        
+      </svg>
+    </div>
+    <div class="label"><div class="num">R1</div><b>Ripple bulb</b><span>Concentric ripples fill the glass and keep spreading outward. The animation expands the rings from the centre.</span></div>
+  </article>
+  <article class="card rb">
+    <div class="stage">
+      <i class="out"></i><i class="out"></i><i class="out"></i>
+      <svg class="bulb" viewBox="0 0 200 240" aria-hidden="true">
+        <defs>
+          <linearGradient id="bgR2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00b4d8"/><stop offset="1" stop-color="#2563eb"/></linearGradient>
+          <linearGradient id="bsR2" x1="0" x2="1"><stop offset="0" stop-color="#1d4ed8"/><stop offset=".5" stop-color="#38bdf8"/><stop offset="1" stop-color="#1d4ed8"/></linearGradient>
+          <clipPath id="cpR2"><path d="M100 20C58 20 30 52 30 92c0 28 16 46 32 62 8 8 10 16 10 26h56c0-10 2-18 10-26 16-16 32-34 32-62 0-40-28-72-70-72z"/></clipPath>
+        </defs>
+        <path d="M100 20C58 20 30 52 30 92c0 28 16 46 32 62 8 8 10 16 10 26h56c0-10 2-18 10-26 16-16 32-34 32-62 0-40-28-72-70-72z" fill="url(#bgR2)"/>
+        <g clip-path="url(#cpR2)"><circle class="in" cx="100" cy="100" r="30" fill="none" stroke="#fff" stroke-width="6"/><circle class="in" cx="100" cy="100" r="30" fill="none" stroke="#fff" stroke-width="6"/><circle class="in" cx="100" cy="100" r="30" fill="none" stroke="#fff" stroke-width="6"/><circle cx="100" cy="100" r="13" fill="#fff"/></g>
+        <rect x="70" y="186" width="60" height="13" rx="6.5" fill="url(#bsR2)"/>
+        <rect x="76" y="203" width="48" height="12" rx="6" fill="url(#bsR2)"/>
+        <rect x="88" y="219" width="24" height="11" rx="5.5" fill="url(#bsR2)"/>
+        
+      </svg>
+    </div>
+    <div class="label"><div class="num">R2</div><b>Ripple bulb, animated glass</b><span>Same bulb, but the ripples inside the glass pulse out from a bright core, like a drop of light in water.</span></div>
+  </article>
+  <article class="card rb">
+    <div class="stage">
+      <i class="out"></i><i class="out"></i><i class="out"></i>
+      <svg class="bulb" viewBox="0 0 200 240" aria-hidden="true">
+        <defs>
+          <linearGradient id="bgR3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00b4d8"/><stop offset="1" stop-color="#2563eb"/></linearGradient>
+          <linearGradient id="bsR3" x1="0" x2="1"><stop offset="0" stop-color="#1d4ed8"/><stop offset=".5" stop-color="#38bdf8"/><stop offset="1" stop-color="#1d4ed8"/></linearGradient>
+          <clipPath id="cpR3"><path d="M100 20C58 20 30 52 30 92c0 28 16 46 32 62 8 8 10 16 10 26h56c0-10 2-18 10-26 16-16 32-34 32-62 0-40-28-72-70-72z"/></clipPath>
+        </defs>
+        <path d="M100 20C58 20 30 52 30 92c0 28 16 46 32 62 8 8 10 16 10 26h56c0-10 2-18 10-26 16-16 32-34 32-62 0-40-28-72-70-72z" fill="url(#bgR3)"/>
+        <g clip-path="url(#cpR3)"><circle cx="100" cy="100" r="46" fill="none" stroke="#fff" stroke-width="3" opacity=".35"/><circle cx="100" cy="100" r="70" fill="none" stroke="#fff" stroke-width="3" opacity=".2"/><path d="M86 66v70h38" fill="none" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/><circle cx="124" cy="136" r="0"/></g>
+        <rect x="70" y="186" width="60" height="13" rx="6.5" fill="url(#bsR3)"/>
+        <rect x="76" y="203" width="48" height="12" rx="6" fill="url(#bsR3)"/>
+        <rect x="88" y="219" width="24" height="11" rx="5.5" fill="url(#bsR3)"/>
+        
+      </svg>
+    </div>
+    <div class="label"><div class="num">R3</div><b>Ripple bulb with an L</b><span>Ripples on the glass with a white L at the centre, so the bulb also carries the L of LUMOVO.</span></div>
+  </article>
+
+</main>
+
+<header class="sec">
+  <h2>Merge: line-art bulb + lumen ripples</h2>
+  <p>Option 2's bulb with Option 3's ripples. The glowing core of the bulb is where the ripples are born, and they spread out across the page.</p>
+</header>
+
+<main class="grid">
+
+  <article class="card mg">
+    <div class="stage"><i class="rip"></i><i class="rip"></i><i class="rip"></i><svg class="bulb" viewBox="0 0 200 240" aria-hidden="true">
+        <defs>
+          <radialGradient id="mgA" cx="50%" cy="42%" r="55%"><stop offset="0" stop-color="#fff"/><stop offset=".5" stop-color="#fff7d6"/><stop offset="1" stop-color="#bfeaf6" stop-opacity=".55"/></radialGradient>
+          <filter id="mbA"><feGaussianBlur stdDeviation="6"/></filter>
+        </defs>
+        <circle cx="100" cy="98" r="64" fill="#fff7d6" opacity=".9" filter="url(#mbA)"/>
+        <path d="M100 20C58 20 30 52 30 92c0 28 16 46 32 62 8 8 10 16 10 26h56c0-10 2-18 10-26 16-16 32-34 32-62 0-40-28-72-70-72z" fill="url(#mgA)" stroke="#2563eb" stroke-width="5" stroke-linejoin="round"/>
+        <circle cx="100" cy="98" r="9" fill="#fff"/>
+        <path d="M80 150v-38q10-18 20 0t20 0v38" fill="none" stroke="#2563eb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="74" y="184" width="52" height="12" rx="6" fill="#2563eb"/><rect x="80" y="200" width="40" height="12" rx="6" fill="#00b4d8"/><rect x="90" y="216" width="20" height="10" rx="5" fill="#2563eb"/>
+      </svg></div>
+    <div class="label"><div class="num">M1</div><b>Bulb and ripples</b><span>No disc. The bulb floats on the page and ripples radiate from its core. Lightest and cleanest.</span></div>
+  </article>
+
+  <article class="card mg">
+    <div class="stage"><div class="disc2"></div><i class="rip"></i><i class="rip"></i><i class="rip"></i><svg class="bulb" viewBox="0 0 200 240" aria-hidden="true">
+        <defs>
+          <radialGradient id="mgB" cx="50%" cy="42%" r="55%"><stop offset="0" stop-color="#fff"/><stop offset=".5" stop-color="#fff7d6"/><stop offset="1" stop-color="#bfeaf6" stop-opacity=".55"/></radialGradient>
+          <filter id="mbB"><feGaussianBlur stdDeviation="6"/></filter>
+        </defs>
+        <circle cx="100" cy="98" r="64" fill="#fff7d6" opacity=".9" filter="url(#mbB)"/>
+        <path d="M100 20C58 20 30 52 30 92c0 28 16 46 32 62 8 8 10 16 10 26h56c0-10 2-18 10-26 16-16 32-34 32-62 0-40-28-72-70-72z" fill="url(#mgB)" stroke="#2563eb" stroke-width="5" stroke-linejoin="round"/>
+        <circle cx="100" cy="98" r="9" fill="#fff"/>
+        <path d="M80 150v-38q10-18 20 0t20 0v38" fill="none" stroke="#2563eb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="74" y="184" width="52" height="12" rx="6" fill="#2563eb"/><rect x="80" y="200" width="40" height="12" rx="6" fill="#00b4d8"/><rect x="90" y="216" width="20" height="10" rx="5" fill="#2563eb"/>
+      </svg></div>
+    <div class="label"><div class="num">M2</div><b>Bulb on a disc, with ripples</b><span>Keeps the soft blue disc from Option 2, with ripples spreading beyond it. Closest to the original orb.</span></div>
+  </article>
+
+</main>
+</body>
+</html>

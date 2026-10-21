@@ -59,3 +59,21 @@ Services = WA-01, Selected work = WA-02 (later removed), Principles = WA-03, Abo
 - Verified that the game and the text guide render at 390px.
 - Created `assets/finnish-first-hour-preview.png` (headless-Chrome screenshot of the game's opening scene) for the landing page.
 - The content is marked **DRAFT**; the Finnish needs native-speaker review.
+
+## Hero visual refinement
+
+- Explored light / illumination versions of the hero orb in `design-explorations/orb-variants.html` (six shapes, five "L" treatments, three ripple-bulb versions, two merges). Reference stock imagery was used for inspiration only; all artwork is original.
+- Chose **M2**: the line-art bulb on a soft blue disc, with lumen ripples born at the bulb's core.
+- Replaced the old `.orb` in the hero with the M2 visual (`.lumo-visual`, inline SVG, no image files). Ripples travel **6.4x** their size before fading, twice the first version (3.2x). Hidden on mobile like the old orb; disabled for reduced-motion users.
+- **Open:** the request to "change it to lumovo-edu" is not yet applied (brand name vs. wordmark vs. visual name not confirmed).
+
+## Header logo and light / dark mode
+
+- **Logo:** the header mark is now a blue-to-cyan **bulb** (inline SVG, white filament, screw base), replacing the old arch mark. Interim logo, as requested.
+- **Theme toggle:** a sun / moon button in the nav (kept visible on mobile) switches light and dark mode.
+  - Colours moved to CSS tokens: `--surface`, `--link`, `--grad-a`, `--nav-text`, `--pane-bg`, `--ghost-hover`, `--rip`, `--hero-bg`, `--footer-bg`. A `:root[data-theme="dark"]` block overrides them.
+  - The choice is saved in `localStorage` (`lumovo-theme`). First visit follows the visitor's system setting.
+  - A tiny script in `<head>` sets the theme before first paint, so there is no flash of the wrong colours.
+  - The toggle's `aria-label` and `aria-pressed` update on every click.
+- Checked both modes across the whole page in headless Chrome. The contact band keeps its blue gradient in both modes by design.
+- **Not yet applied to** the dashboard (`onboarding-dashboard/`) and the Finnish course (`finnish-course/`), which have their own styles.
