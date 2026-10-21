@@ -1,0 +1,1364 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+generate_dummy_tracker.py
+=========================
+Builds NHO_Tracker_Dummy_Data.xlsx — a 100% SYNTHETIC clone of the Google Sheet
+tab "Cohort Tracker May - December 26" that the Onboarding Apps Script (Code.gs) reads
+and writes.
+
+Nothing in this file is derived from real employee data. All names, emails,
+locations, managers, recruiters and HRBPs are invented; email domains are the
+RFC-2606 reserved example.com / example.net.
+
+WHY THE ODD-LOOKING CHOICES IN HERE ARE DELIBERATE
+--------------------------------------------------
+The Apps Script addresses columns A-R by HARD-CODED INDEX (row[0]..row[17]) and
+finds only Department / Okta Activated / Device Ship Date by header text. That
+makes several things load-bearing in ways that are not obvious:
+
+  * Col G is TEXT "yyyy-MM-dd", never a Date. isOffCycleStart_() does an exact
+    `CONFIG.COHORT_DATES.indexOf(String(startDate).trim()) === -1` membership
+    test; a real Date stringifies to "Mon Sep 21 2026 ..." and would fire a
+    false off-cycle Slack alert on EVERY hire.
+  * Col H is TEXT "MMM dd, yyyy" with a ZERO-PADDED day. Three scanners and the
+    dashboard compare it with `!==` against Utilities.formatDate output.
+    "Sep 8, 2026" returns zero hires from every scanner while still rendering.
+  * Cols B/C/D are real booleans. markSlackChannelInTracker_ gates on bare
+    truthiness (`if (!row[2])`), so the STRING "FALSE" is truthy and would
+    permanently block a row from ever being marked.
+  * Col P is DUAL-TYPED on purpose: seeded boolean false, later overwritten
+    with a group URL by markGoogleGroupInTracker_. So no checkbox validation
+    on P — it has to accept a URL string.
+
+Deterministic: fixed seed, and "today" is the literal constant 2026-09-11.
+Re-running produces an identical logical dataset.
+
+Run:  python3 generate_dummy_tracker.py
+Out:  ./NHO_Tracker_Dummy_Data.xlsx
+"""
+
+# =============================================================================
+# CANONICAL GENERATOR FOR NHO_Tracker_Dummy_Data.xlsx  (repair round 4)
+# =============================================================================
+# An earlier round retargeted this script to a sandbox filename because a
+# SECOND generator (living in another agent's scratch dir) also wrote the
+# deliverable and the two raced. That retarget has been REVERSED, on evidence:
+#
+#   * The build spec's headerRow is 21 entries, A..U, ending
+#     Location / Department / Okta Activated / Device Ship Date, and its
+#     conflicts section resolves the live sheet's manual S-V block
+#     ("Dashboard Link", "DM to manager", "DM to new hire", "HRBP from sheet")
+#     with "RESOLVED: no" -- nothing in Code.gs reads row[18..21].
+#   * The deliverable currently on disk is exactly that 21-column A..U shape
+#     and is byte-for-byte this script's output, so this script -- not the
+#     25-column one -- produced the artifact the verifiers reviewed.
+#
+# RACE WARNING, still live: the other generator hard-codes the same OUT_PATH
+# and emits a 25-column A..Y layout. Whichever runs last wins. That has to be
+# arbitrated by the owner, not by a filename change here.
+# =============================================================================
+
+
+import os
+import random
+import re
+from datetime import date, timedelta
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
+
+# ─── DETERMINISM ─────────────────────────────────────────────────────────────
+random.seed(20260911)
+TODAY = date(2026, 9, 11)          # literal constant; datetime.now() is banned
+
+OUT_DIR = os.path.dirname(os.path.abspath(__file__))
+# RETARGETED (repair round 3, re-applied 12:09): this generator is SUPERSEDED.
+# The one designated generator is generate_dummy_tracker_CANONICAL.py (25 cols,
+# A..Y), mirrored from /Users/azilen/.claude/jobs/cc36eb56/tmp/. This script
+# raced it and silently replaced the deliverable four times. The deliverable is
+# also shipped mode 0444, so a naive wb.save() here now raises PermissionError.
+OUT_PATH = os.path.join(OUT_DIR, "SUPERSEDED_21col_tracker.xlsx")
+
+SHEET_NAME = "Cohort Tracker May - December 26"   # CONFIG.TRACKER_SHEET_NAME
+
+# ─── CONSTANTS MIRRORED FROM Code.gs CONFIG ──────────────────────────────────
+COHORT_DATES = [
+    "2026-05-11", "2026-05-25", "2026-06-08", "2026-06-22",
+    "2026-07-06", "2026-07-13", "2026-07-27", "2026-08-10",
+    "2026-08-24", "2026-09-08", "2026-09-21", "2026-10-05",
+    "2026-10-19", "2026-11-02", "2026-11-30", "2026-12-14",
+]
+
+# CONFIG.UK_KEYWORDS — matched with a raw lowercased indexOf, no word boundary.
+UK_KEYWORDS = ["united kingdom", "uk", "england", "scotland", "wales", "london", "emea"]
+
+HEADER_ROW = [
+    "CTA Status",                 # A  positional row[0]
+    "Manager Email Sent",         # B  positional row[1]   bool
+    "Slack",                      # C  positional row[2]   bool
+    "New Hire Kit Ordered",       # D  positional row[3]   bool
+    "First Name",                 # E  EXACT-MATCH CONTRACT (case-sensitive)
+    "Last Name",                  # F  EXACT-MATCH CONTRACT (case-sensitive)
+    "Joining Date",               # G  positional row[6]   text yyyy-MM-dd
+    "Next Cohort Date",           # H  positional row[7]   text MMM dd, yyyy
+    "Personal Email",             # I  positional row[8]
+    "Work Email",                 # J  EXACT-MATCH CONTRACT (case-sensitive)
+    "Job Title",                  # K  positional row[10]
+    "Manager Name",               # L  positional row[11]
+    "Manager Email",              # M  positional row[12]
+    "HRBP",                       # N  positional row[13]
+    "Recruiter",                  # O  positional row[14]
+    "Google Group Created",       # P  positional row[15]  URL or boolean False
+    "Google Group Meeting Link",  # Q  positional row[16]
+    "Location",                   # R  positional row[17]
+    "Department",                 # S  found by header text, case-insensitive
+    "Okta Activated",             # T  found by header text, case-SENSITIVE
+    "Device Ship Date",           # U  found by header text, case-SENSITIVE
+]
+
+# Only these five non-empty values may appear in col A. The dashboard renders
+# ANY non-empty col A as a GREEN pill, so no negative word ("Blocked") belongs
+# here — a red-flag word would render as a success badge.
+CTA_VALUES = ["Invite Sent", "Confirmed", "Attended", "No Show", "Rescheduled"]
+
+MONTH_ABBR = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+EMAIL_DOMAIN = "example.com"          # RFC 2606 reserved
+PERSONAL_DOMAIN = "mailbox.example.net"
+
+# The Apps Script cut-off that decides which cohorts have already been
+# provisioned. Everything on or before Sep 08 is "green"; Sep 21 onward is not.
+LAST_PROVISIONED_COHORT = "2026-09-08"
+
+# Every scanner branch in Code.gs, as a (label, day-offset-from-cohort-date,
+# which scanner) triple. All three scanners iterate CONFIG.COHORT_DATES and
+# compare `today` against a fixed offset with `===`, so a branch fires on
+# exactly one calendar date per cohort and on no other date at all:
+#   dailyScanner            Code.gs:1268 addDays_(c,-4), :1269 addDays_(c,-3),
+#                           :1343 c+1, :1355 c+2, :1367 c+7, :1379 c+9
+#   fridayAfternoonScanner  Code.gs:2068 `if (today !== addDays_(c,-3)) return;`
+#   mondayScanner           Code.gs:1800 `if (today !== cohortDate) return;`
+# There is NO branch at cohort+3, which is where the pinned "today" of
+# 2026-09-11 sits relative to the 2026-09-08 cohort — see scanner_calendar().
+SCANNER_BRANCHES = [
+    (-4, "dailyScanner", "Thursday cohort notice (+ holiday alert)"),
+    (-3, "dailyScanner", "Friday reminder + manager DMs"),
+    (-3, "fridayAfternoonScanner", "Slack channel + Google group + non-US notification"),
+    (0, "mondayScanner", "cohort-day channel setup and manager DMs"),
+    (1, "dailyScanner", "day-2 follow-up"),
+    (2, "dailyScanner", "day-3 follow-up"),
+    (7, "dailyScanner", "week-1 check-in"),
+    (9, "dailyScanner", "week-2 check-in"),
+]
+
+
+# ─── HELPERS ─────────────────────────────────────────────────────────────────
+def iso_to_date(iso):
+    y, m, d = (int(x) for x in iso.split("-"))
+    return date(y, m, d)
+
+
+def fmt_display(d):
+    """Reproduces Utilities.formatDate(new Date(iso+"T12:00:00"), tz, "MMM dd, yyyy").
+
+    The zero-padded day is mandatory: getCohortHires_, markSlackChannelInTracker_
+    and markGoogleGroupInTracker_ all compare col H with `!==` against exactly
+    this string. Built from an explicit month table rather than strftime("%b")
+    so the output can never drift with the machine's locale.
+    """
+    return "%s %02d, %d" % (MONTH_ABBR[d.month], d.day, d.year)
+
+
+# The only 16 strings col H is allowed to contain. Built once, from the same
+# formatter, so guard_date_text_only() can check the written file against it.
+LEGAL_H_DISPLAY = frozenset(fmt_display(iso_to_date(c)) for c in COHORT_DATES)
+
+
+def slug(s):
+    """buildDerivedFields_'s work-email token rule (Code.gs:1006-1008):
+    lowercase, strip whitespace, then strip every non-[a-z0-9]."""
+    return re.sub(r"[^a-z0-9]", "", re.sub(r"\s+", "", s.lower()))
+
+
+def manager_email_from(name):
+    """buildDerivedFields_'s MANAGER rule (Code.gs:1012-1015) — subtly different
+    from the work-email rule: token[0] is lowercased AS-IS (non-alphanumerics are
+    NOT stripped from the first token); the remaining tokens are joined then
+    stripped. For two-token names this yields 'first.last@<domain>'.
+    """
+    parts = name.strip().split()
+    first = parts[0].lower()
+    rest = re.sub(r"[^a-z0-9]", "", "".join(parts[1:]).lower())
+    return "%s.%s@%s" % (first, rest, EMAIL_DOMAIN)
+
+
+def group_url(cohort_iso):
+    """Current cohortGroupEmail_ slug form: onboarding-<yyyy-MM-dd>."""
+    return "https://groups.google.com/a/%s/g/onboarding-%s" % (EMAIL_DOMAIN, cohort_iso)
+
+
+def meet_code(rnd):
+    """Bare Meet URL, 3-4-3 lowercase letters. One code per cohort."""
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    seg = lambda n: "".join(rnd.choice(letters) for _ in range(n))
+    return "https://meet.google.com/%s-%s-%s" % (seg(3), seg(4), seg(3))
+
+
+# ─── HRBP OWNERSHIP: one HRBP owns a fixed set of departments, forever ───────
+HRBP_BY_DEPT = {}
+for _dept, _hrbp in [
+    ("Engineering", "HRBP A"), ("Platform Engineering", "HRBP A"), ("AI Platform", "HRBP A"),
+    ("Enterprise Sales", "HRBP B"), ("EU Sales", "HRBP B"),
+    ("Account Management", "HRBP B"), ("Solutions Engineering", "HRBP B"),
+    ("Product", "HRBP C"), ("Product Design", "HRBP C"), ("Marketing", "HRBP C"),
+    ("Content Strategy & Thought Leadership", "HRBP C"),
+    ("Customer Success", "HRBP D"), ("Deployment", "HRBP D"),
+    ("Client Partnership", "HRBP D"), ("Enablement", "HRBP D"),
+    ("Member Success & Coach Support Operations", "HRBP D"),
+    ("Finance", "HRBP E"), ("Legal", "HRBP E"), ("Legal, Commercial", "HRBP E"),
+    ("Business Operations & Strategy", "HRBP E"),
+    ("Labs", "HRBP F"), ("Behavioral Science", "HRBP F"), ("People Insights", "HRBP F"),
+    ("Talent Acquisition", "HRBP F"), ("Information Technology & Security", "HRBP F"),
+    ("Total Rewards & HR Operations", "HRBP F"),
+]:
+    HRBP_BY_DEPT[_dept] = _hrbp
+
+
+# ─── THE 44 HIRES ────────────────────────────────────────────────────────────
+# Tuple layout:
+#   (cohort_iso, First, Last, JobTitle, Department, Location, Manager, Recruiter)
+# Per-row exceptions are applied afterwards from the named sets below, so that
+# every anomaly in the sheet has exactly one place it is declared.
+HIRES = [
+    # ── 2026-05-11 · S10 oldest-past · fully provisioned, col Q BLANK (group-link-only era)
+    ("2026-05-11", "Alex", "Carter", "Software Engineer", "Engineering",
+     "Austin, Texas, United States", "Morgan Smith", "Recruiter A"),
+    ("2026-05-11", "Jordan", "Lee", "Customer Success Manager", "Customer Success",
+     "Portland, Oregon, United States", "Jamie Wilson", "Recruiter B"),
+    ("2026-05-11", "Taylor", "Morgan", "Product Manager", "Product",
+     "Chicago, Illinois, United States", "Riley Chen", "Recruiter C"),
+
+    # ── 2026-05-25 · S10 + US holiday cohort (Memorial Day is in US_HOLIDAYS_2026)
+    ("2026-05-25", "Casey", "Brown", "Account Executive, Commercial", "Enterprise Sales",
+     "Boston, Massachusetts, United States", "Avery Nakagawa", "Recruiter C"),
+    ("2026-05-25", "Priya", "Raman", "Data Engineer", "Platform Engineering",
+     "Seattle, Washington, United States", "Sloane Bennett", "Recruiter A"),
+
+    # ── 2026-06-08 · S9 complete-past · MULTI-HIRE #1 (4) · carries the LEGACY col O
+    ("2026-06-08", "Devon", "Okafor", "Enterprise Account Executive, Enterprise", "Enterprise Sales",
+     "Atlanta, Georgia, United States", "Avery Nakagawa",
+     "Dept: Enterprise Sales | Recruiter: Recruiter C"),          # legacy parseNoteParts_ shape
+    ("2026-06-08", "Maya", "Lindqvist", "Product Designer", "Product Design",
+     "Minneapolis, Minnesota, United States", "Riley Chen", "Recruiter D"),
+    ("2026-06-08", "Omar", "Haddad", "Behavioral Scientist", "Behavioral Science",
+     "Ann Arbor, Michigan, United States", "Dakota Whitfield", "Recruiter E"),
+    ("2026-06-08", "Sienna", "Whitfield", "Marketing Director", "Marketing",
+     "Brooklyn, New York, United States", "Harper Adeyinka", "Recruiter B"),
+
+    # ── 2026-06-22 · S9 + the one S7b row (blank col M -> col B stays FALSE forever)
+    ("2026-06-22", "Kai", "Nakamura", "Senior Software Engineer", "Engineering",
+     "San Diego, California, United States", "Morgan Smith", "Recruiter A"),
+    ("2026-06-22", "Rosa", "Delgado", "Client Partner", "Client Partnership",
+     "Denver, Colorado, United States", "Rowan Mistry", "Recruiter B"),
+    ("2026-06-22", "Theo", "Ashford", "Solutions Engineer", "Solutions Engineering",
+     "Raleigh, North Carolina, United States", "Sloane Bennett", ""),
+
+    # ── 2026-07-06 · S9 light cohort (week after July 4)
+    ("2026-07-06", "Nia", "Bankole", "Behavioral Science Intern", "Behavioral Science",
+     "Providence, Rhode Island, United States", "Dakota Whitfield", "Recruiter E"),
+    ("2026-07-06", "Lucas", "Ferreira", "Data Intern", "Labs",
+     "Baltimore, Maryland, United States", "Dakota Whitfield", "Recruiter E"),
+
+    # ── 2026-07-13 · S9 + OFF-CYCLE #1 (Amara starts 2026-07-09, rolls into Jul 13)
+    ("2026-07-13", "Amara", "Osei", "FP&A Manager", "Finance",
+     "Salt Lake City, Utah, United States", "Emerson Diaz", "Recruiter F"),
+    ("2026-07-13", "Bennett", "Croft", "Commercial Counsel", "Legal, Commercial",
+     "Nashville, Tennessee, United States", "Emerson Diaz", "Recruiter F"),
+    ("2026-07-13", "Yuki", "Tanabe", "UX Researcher", "Product Design",
+     "Portland, Maine, United States", "Riley Chen", "Recruiter D"),
+
+    # ── 2026-07-27 · S6b · the Slack channel never existed -> col C FALSE cohort-wide
+    ("2026-07-27", "Elena", "Vasquez", "Sales Enablement Manager, GTM", "Enablement",
+     "Washington, DC, United States", "Parker Ogundele", "Recruiter B"),
+    ("2026-07-27", "Marcus", "Ellington", "Revenue Operations Analyst", "Business Operations & Strategy",
+     "Honolulu, Hawaii, United States", "Skyler Ahmed", "Recruiter D"),
+
+    # ── 2026-08-10 · S9 + INTERNATIONAL (1 Canada, 1 Netherlands) · ZERO UK on purpose
+    ("2026-08-10", "Quinn", "Abernathy", "Information Security Engineer", "Information Technology & Security",
+     "Denver, Colorado", "Reese Carlisle", "Recruiter A"),      # <- US/non-US DIVERGENCE row
+    ("2026-08-10", "Ravi", "Bhatt", "Machine Learning Engineer", "AI Platform",
+     "Toronto, Ontario, Canada", "Jamie Wilson", "Recruiter A"),
+    ("2026-08-10", "Colette", "Dubois", "Deployment Manager, EMEA", "Deployment",
+     "Amsterdam, Netherlands", "Rowan Mistry", "Recruiter C"),
+
+    # ── 2026-08-24 · S11 exception-past · fully provisioned but one row is a No Show
+    ("2026-08-24", "Isaac", "Mbeki", "Change Activation Partner", "Client Partnership",
+     "Brooklyn, New York, United States", "Rowan Mistry", "Recruiter B"),
+    ("2026-08-24", "Nora", "Halvorsen", "Talent Acquisition Operations Lead", "Talent Acquisition",
+     "Austin, Texas, United States", "Skyler Ahmed", "Recruiter F"),
+
+    # ── 2026-09-08 · S8 ACTIVE WINDOW (cohort < today <= cohort+13) · MULTI-HIRE #2 (4)
+    ("2026-09-08", "Diego", "Salcedo", "DevOps Engineer", "Platform Engineering",
+     "Chicago, Illinois, United States", "Morgan Smith", "Recruiter A"),
+    ("2026-09-08", "Simone", "Beaufort", "Senior AI Product Manager", "Product",
+     "Boston, Massachusetts, United States", "Riley Chen", "Recruiter D"),
+    ("2026-09-08", "Anders", "Kjellberg", "Principal Deployment Architect, Member Experience Technology",
+     "Member Success & Coach Support Operations",
+     "Seattle, Washington, United States", "Skyler Ahmed", "Recruiter B"),
+    ("2026-09-08", "Leila", "Nasser", "People Insights Analyst", "People Insights",
+     "Atlanta, Georgia, United States", "Harper Adeyinka", ""),
+
+    # ── 2026-09-21 · S4 NEXT COHORT (T-10, the dashboard hero) · MULTI-HIRE #3 (6)
+    #    Carries AUDIT-GAP #1 and #2, OFF-CYCLE #2, and the only 2 UK rows.
+    ("2026-09-21", "Farah", "Siddiqui", "Technical Program Manager", "Product",
+     "Minneapolis, Minnesota, United States", "Riley Chen", "Recruiter D"),
+    ("2026-09-21", "Zane", "Whitlock", "Data Scientist", "Labs",
+     "", "Dakota Whitfield", "Recruiter E"),                    # <- AUDIT-GAP #2: blank location
+    ("2026-09-21", "Grant", "Whitaker", "Staff Platform Engineer", "Platform Engineering",
+     "Nashville, Tennessee, United States", "Morgan Smith", "Recruiter A"),
+    ("2026-09-21", "Aisha", "Rahim", "Enterprise Account Manager, EMEA", "EU Sales",
+     "London, England, United Kingdom", "Avery Nakagawa",
+     "Recruiter B, Recruiter D"),                               # <- the one MULTI-RECRUITER cell
+    ("2026-09-21", "Tobias", "Renner", "Writer and Strategist, Thought Leadership",
+     "Content Strategy & Thought Leadership",
+     "Manchester, England, United Kingdom", "Harper Adeyinka", ""),
+    ("2026-09-21", "Camille", "Fontaine", "Product Design Intern", "Product Design",
+     "Berlin, Germany", "Riley Chen", "Recruiter C"),
+
+    # ── 2026-10-05 · S3 mid-future (T-24) · carries AUDIT-GAP #3
+    ("2026-10-05", "Petra", "Novak", "Business Operations Manager", "Business Operations & Strategy",
+     "Vancouver, British Columbia, Canada", "Skyler Ahmed", "Recruiter F"),
+    ("2026-10-05", "Hector", "Pereira", "Total Rewards Analyst", "Total Rewards & HR Operations",
+     "Baltimore, Maryland, United States", "Skyler Ahmed", "Recruiter F"),
+    ("2026-10-05", "Ingrid", "Salomon", "AI Automation Engineer", "AI Platform",
+     "Bengaluru, Karnataka, India", "Jamie Wilson", ""),
+
+    # ── 2026-10-19 · S3 mid-future (T-38) · Singapore + Australia
+    ("2026-10-19", "Joel", "Adeyemi", "Customer Advocate", "Customer Success",
+     "Singapore, Singapore", "Parker Ogundele", "Recruiter B"),
+    ("2026-10-19", "Keira", "Donnelly", "Quality Operations Manager",
+     "Member Success & Coach Support Operations",
+     "Melbourne, Victoria, Australia", "Skyler Ahmed", ""),
+    ("2026-10-19", "Mateo", "Ruiz", "IT Engineer", "Information Technology & Security",
+     "San Diego, California, United States", "Reese Carlisle", "Recruiter A"),
+
+    # ── 2026-11-02 · S2 far-future · SKELETAL BUT COMPLETE on all 5 audited fields · ZERO UK
+    ("2026-11-02", "Naomi", "Sterling", "Associate General Counsel, Commercial", "Legal",
+     "Boston, Massachusetts, United States", "Emerson Diaz", ""),
+    ("2026-11-02", "Oscar", "Lindgren", "Research Services Strategist", "Labs",
+     "Montreal, Quebec, Canada", "Dakota Whitfield", ""),
+
+    # ── 2026-11-30 · S2 far-future · skeletal, N and O blank
+    ("2026-11-30", "Rafael", "Montoya", "Member Success Specialist", "Customer Success",
+     "Raleigh, North Carolina, United States", "Parker Ogundele", ""),
+    # NOTE: the obvious pool entry here, "Sydney, New South Wales, Australia",
+    # is a LANDMINE and the guard below rejects it. CONFIG.UK_KEYWORDS contains
+    # the bare token "wales" and is matched with a raw lowercased indexOf, so
+    # "New South Wales" would route this Australian hire into the UK/EMEA
+    # member-add. The two-part "City, Country" shape is legal and side-steps it.
+    ("2026-11-30", "Selina", "Vaughn", "Marketing Intern", "Marketing",
+     "Sydney, Australia", "Harper Adeyinka", ""),
+
+    # ── 2026-12-14 · S0 EMPTY on purpose. getDashboardData pre-seeds all 16
+    #    COHORT_DATES, so this renders the "No hires" empty-state card and is
+    #    what the mondayScanner "no hires found in tracker" branch looks like.
+    #    DO NOT ADD ROWS HERE.
+]
+
+# ─── NAMED PER-ROW EXCEPTIONS (every anomaly is declared exactly once) ───────
+# Off-cycle starts: col G deliberately NOT in COHORT_DATES, so isOffCycleStart_
+# fires. Col H still obeys buildDerivedFields_'s "first cohort on or after G".
+OFF_CYCLE_START = {
+    ("Amara", "Osei"): "2026-07-09",     # rolls into Jul 13, 2026  (past artifact)
+    ("Grant", "Whitaker"): "2026-09-15",  # rolls into Sep 21, 2026  (live alert)
+}
+
+# AUDIT-GAP rows — the ONLY three rows auditTrackerForIssues_ can ever report,
+# because Code.gs:747 skips any row whose col G is blank or < today.
+AUDIT_GAP_1 = ("Farah", "Siddiqui")   # blank I + blank J -> "missing: personal email, work email"
+AUDIT_GAP_2 = ("Zane", "Whitlock")    # blank R           -> "missing: location"
+AUDIT_GAP_3 = ("Petra", "Novak")      # blank K + L (+ M) -> "missing: job title, manager"
+
+# Blank col I. The two past-cohort ones are realistic Ashby "New Hire Alert"
+# artifacts (that parser never supplies a personal email) and generate ZERO
+# audit noise because their start dates are in the past.
+BLANK_PERSONAL_EMAIL = {("Kai", "Nakamura"), ("Nia", "Bankole"), AUDIT_GAP_1}
+BLANK_WORK_EMAIL = {AUDIT_GAP_1}
+BLANK_JOB_TITLE = {AUDIT_GAP_3}
+BLANK_MANAGER_NAME = {AUDIT_GAP_3}
+# S7b: manager name present but manager email missing, so sendManagerDMs_ skips
+# the group BEFORE the col-B write and col B stays FALSE on a past cohort.
+S7B_ROW = ("Theo", "Ashford")
+BLANK_MANAGER_EMAIL = {AUDIT_GAP_3, S7B_ROW}
+
+# Col B: TRUE for every provisioned cohort EXCEPT the S7b row.
+NO_MANAGER_DM = {S7B_ROW}
+# Col C: the Jul 27 cohort's Slack channel was never created in time.
+NO_SLACK_COHORTS = {"2026-07-27"}
+# Col C exception on the next cohort: the audit-gap row that is missing both
+# emails still got its Slack channel, so Sep 21 does not read as uniformly dead.
+SLACK_TRUE_FUTURE = {AUDIT_GAP_1}
+# Col P/Q exception: same row also carries the Sep 21 group + Meet links.
+GROUP_LINK_FUTURE = {AUDIT_GAP_1}
+
+# Col D (Kit Ordered) is the ONE flag no code path ever writes, so it may
+# legitimately be TRUE on a future cohort.
+KIT_TRUE_FUTURE = {
+    AUDIT_GAP_1, AUDIT_GAP_2, ("Grant", "Whitaker"), ("Aisha", "Rahim"),  # 4 of 6 on Sep 21
+    ("Hector", "Pereira"),                                                # 1 on Oct 05
+    ("Joel", "Adeyemi"),                                                  # 1 on Oct 19
+}
+
+# Col U on Sep 21: 3 of 6 populated so the "No Device Yet" block shows a
+# credible non-zero, non-total count. All three are on-cycle (G = Sep 21).
+DEVICE_SHIPPED_FUTURE = {AUDIT_GAP_1, AUDIT_GAP_2, ("Aisha", "Rahim")}
+
+# ── Sep 08 (the ACTIVE-window cohort the dashboard badges "Past / Active") ──
+# Without this row all four Sep 08 cards are byte-identical — same four green
+# pills, same Okta tick, same device date — which reads as placeholder data on
+# the one cohort the demo lands in. This hire is the realistic laggard: the CTA
+# invite was accepted but the session is unreconciled, the kit was never
+# ordered, and IT has not activated Okta yet. Only cols A, D and T differ, and
+# none of the three is read by any scanner (col A is human-only, col D has no
+# writer anywhere in Code.gs, col T is dashboard-only), so the variation is
+# free of automation side effects.
+SEP08_LAGGARD = ("Leila", "Nasser")
+NO_KIT_PAST = {SEP08_LAGGARD}
+NO_OKTA_PAST = {SEP08_LAGGARD}
+
+# Col A. Past cohorts get "Attended" on ~70% of rows; exactly one "No Show"
+# (Aug 24) and exactly one "Rescheduled" (Jul 27) exist in the whole sheet.
+CTA_BLANK_PAST = {
+    ("Jordan", "Lee"), ("Taylor", "Morgan"),   # May 11 -> col A blank on 2 of 3
+    ("Priya", "Raman"),                        # May 25
+    S7B_ROW,                                   # Jun 22
+    ("Colette", "Dubois"),                     # Aug 10
+}
+CTA_NO_SHOW = {("Isaac", "Mbeki")}
+CTA_RESCHEDULED = {("Marcus", "Ellington")}
+# "Invite Sent" = the CTA calendar invite went out but the session has not run.
+# Both the Sep 21 (T-10) and the Oct 05 (T-24) cohorts are in that state. An
+# EARLIER cohort must never be less advanced than a LATER one, so the three
+# Sep 21 rows below are required for internal consistency with Hector Pereira
+# on Oct 05 — without them the hero cohort renders with no CTA pill at all
+# (the card markup is guarded by `if (hire.ctaStatus)`) while a cohort two
+# weeks further out does show one.
+CTA_INVITE_SENT = {
+    ("Hector", "Pereira"),                     # Oct 05
+    ("Aisha", "Rahim"), ("Tobias", "Renner"),  # Sep 21 — invite out, no reply yet
+}
+# "Confirmed" = the hire accepted the invite. Safe on any cohort: col A is 100%
+# human-maintained (Code.gs:606 and :1099 both stamp "", and nothing in Code.gs
+# ever compares against col A), so none of these values can move the automation.
+CTA_CONFIRMED = {
+    ("Camille", "Fontaine"),                   # Sep 21 — accepted
+    SEP08_LAGGARD,                             # Sep 08 — see below
+}
+
+# Col N. Blank is the honest state for a hire HR has not triaged yet; the
+# dashboard hides the field behind `if (hire.hrbp)`. Concentrated in the three
+# far-out cohorts, plus a realistic scatter of 6 older ones. 13 of 44 total.
+BLANK_HRBP_EXTRA = {
+    ("Taylor", "Morgan"), S7B_ROW, ("Yuki", "Tanabe"),
+    AUDIT_GAP_2, ("Tobias", "Renner"), AUDIT_GAP_3,
+}
+BLANK_HRBP_COHORTS = {"2026-10-19", "2026-11-02", "2026-11-30"}
+
+# ─── COLS G AND H ARE UNIFORMLY TEXT (no real date cells, ever) ─────────
+# An earlier revision of this generator emitted a real date cell in G and H on
+# 5 of the 44 rows, on the theory that the 11 `row[6]/row[7] instanceof Date`
+# guards in Code.gs prove the live column is mixed and that both branches
+# should therefore be exercised. That was wrong for a FIXTURE, for two
+# independently sufficient reasons:
+#
+#   1. The build spec states the contract outright — col G is "PLAIN TEXT
+#      string in yyyy-MM-dd, forced to text", col H is "PLAIN TEXT in exactly
+#      'MMM dd, yyyy'", and dashboardContract #6 is "ALL DATE CELLS WRITTEN AS
+#      TEXT, NEVER AS Date OBJECTS". A fixture that violates its own stated
+#      contract cannot be used to verify anything against that contract.
+#
+#   2. The two read sites with NO Date branch are not hypothetical, they are
+#      load-bearing on this very dataset:
+#        * Code.gs:747  `var cohort = String(row[7] || "").trim();` — the audit
+#          message. A date-typed H on an audit-reachable row makes the Slack
+#          line read "cohort Mon Sep 21 2026 00:00:00 GMT+0530 (...)".
+#        * Code.gs:2829 `var cohort = String(values[i][7]).trim();` inside
+#          fixCohortDateFormat(), whose /^\d{4}-\d{2}-\d{2}$/ can never match a
+#          stringified Date — so the repair utility built to catch exactly this
+#          silently skips those cells and logs "0 cell(s) fixed".
+#      Seeding the fixture with the failure makes the demo emit garbage rather
+#      than surface a bug.
+#
+# The Code.gs weakness is still real and is reported in FIELD_MAP §7 as an
+# owner action (add the `instanceof Date` guard at :747 and :2829, matching
+# :1406 / :2375 / :2534 / :3249) — documented, not baked into the data.
+#
+# Every G cell is therefore written as text with number format "@" in
+# yyyy-MM-dd, and every H cell as text with number format "@" in
+# "MMM dd, yyyy". T and U are text for the same reason. guard_date_text_only()
+# re-asserts this over the workbook that was actually written.
+DATE_COLUMN_LETTERS = ("G", "H", "T", "U")
+
+
+# ─── GENERATOR GUARDS (fail loudly rather than emit a subtly broken sheet) ───
+def guard_locations(rows):
+    """CONFIG.UK_KEYWORDS contains the bare token 'uk' and is matched with a raw
+    lowercased indexOf — no word boundaries. So any city or state containing the
+    substring 'uk' (Dubuque, Paducah, ...) would silently route a hire into the
+    UK/EMEA member-add. Reject anything that trips a UK keyword unless UK
+    routing is actually intended for that row."""
+    intended_uk = {("Aisha", "Rahim"), ("Tobias", "Renner")}
+    for r in rows:
+        loc = (r["location"] or "").lower()
+        hit = [k for k in UK_KEYWORDS if k in loc]
+        key = (r["first"], r["last"])
+        if hit and key not in intended_uk:
+            raise ValueError(
+                "UK-keyword false positive: %s %s location %r trips %r"
+                % (r["first"], r["last"], r["location"], hit))
+        if not hit and key in intended_uk:
+            raise ValueError("Expected UK routing for %s %s but location %r "
+                             "trips no UK keyword" % (r["first"], r["last"], r["location"]))
+
+
+def guard_text_fields(rows):
+    """Every field is concatenated into the dashboard's HTML unescaped, and the
+    email fields are interpolated inside SINGLE-QUOTED onclick handlers. One
+    apostrophe breaks the card markup and the Copy button."""
+    banned = "'\"<>"
+    for r in rows:
+        for field in ("first", "last", "job_title", "manager_name", "location",
+                      "department", "work_email", "personal_email", "manager_email"):
+            v = r.get(field) or ""
+            for ch in banned:
+                if ch in v:
+                    raise ValueError("Banned char %r in %s of %s %s"
+                                     % (ch, field, r["first"], r["last"]))
+        # Header-noise guard: the dashboard skips rows whose first name looks
+        # like a header, and rows where both E and F are blank.
+        if r["first"].strip().lower() in ("first", "first name", "name"):
+            raise ValueError("First name %r is dropped by the header-noise guard" % r["first"])
+        if not r["first"].strip() and not r["last"].strip():
+            raise ValueError("Row with both E and F blank is skipped by every reader")
+
+
+def guard_cohort_contract(rows):
+    """Col H must round-trip to one of the 16 seeded keys, and must be the first
+    COHORT_DATES entry >= col G (buildDerivedFields_ :1019-1026)."""
+    legal_h = {fmt_display(iso_to_date(c)) for c in COHORT_DATES}
+    for r in rows:
+        if r["cohort_display"] not in legal_h:
+            raise ValueError("Col H %r is not one of the 16 legal display strings"
+                             % r["cohort_display"])
+        expected = next((c for c in COHORT_DATES if c >= r["start_date"]), None)
+        if expected != r["cohort"]:
+            raise ValueError("Col H/G mismatch for %s %s: G=%s implies cohort %s, got %s"
+                             % (r["first"], r["last"], r["start_date"], expected, r["cohort"]))
+
+
+# ─── BUILD THE ROW RECORDS ───────────────────────────────────────────────────
+def build_rows():
+    # One Meet code per cohort, identical on every row of that cohort.
+    cohort_meet = {c: meet_code(random) for c in COHORT_DATES}
+
+    seen_work = {}
+    seen_personal = set()
+    rows = []
+
+    for (cohort, first, last, title, dept, loc, mgr, recruiter) in HIRES:
+        key = (first, last)
+
+        # ── col G: PLAIN TEXT yyyy-MM-dd. Off-cycle rows deviate on purpose.
+        start_date = OFF_CYCLE_START.get(key, cohort)
+        cohort_display = fmt_display(iso_to_date(cohort))
+
+        # ── col J: byte-identical to buildDerivedFields_'s output, or
+        #    sendManagerDMs_ never finds the row and re-DMs forever.
+        base_work = "%s.%s" % (slug(first), slug(last))
+        n = seen_work.get(base_work, 0)
+        seen_work[base_work] = n + 1
+        work_local = base_work if n == 0 else "%s%d" % (base_work, n + 1)
+        work_email = "" if key in BLANK_WORK_EMAIL else "%s@%s" % (work_local, EMAIL_DOMAIN)
+
+        # ── col I: consumer-mailbox shape, deliberately unlike col J, globally
+        #    unique (it is the strongest dedup key in isDuplicate_).
+        if key in BLANK_PERSONAL_EMAIL:
+            personal_email = ""
+        else:
+            while True:
+                cand = "%s%s%02d@%s" % (slug(first), slug(last),
+                                        random.randint(10, 99), PERSONAL_DOMAIN)
+                if cand not in seen_personal:
+                    seen_personal.add(cand)
+                    personal_email = cand
+                    break
+
+        manager_name = "" if key in BLANK_MANAGER_NAME else mgr
+        manager_email = "" if key in BLANK_MANAGER_EMAIL else manager_email_from(mgr)
+        job_title = "" if key in BLANK_JOB_TITLE else title
+        location = "" if key == AUDIT_GAP_2 else loc
+
+        provisioned = cohort <= LAST_PROVISIONED_COHORT
+
+        # ── col B: the ONLY writer is sendManagerDMs_ (Code.gs:2027).
+        col_b = provisioned and key not in NO_MANAGER_DM
+        # ── col C: the ONLY writer is markSlackChannelInTracker_ (Code.gs:2539).
+        col_c = (provisioned and cohort not in NO_SLACK_COHORTS) or key in SLACK_TRUE_FUTURE
+        # ── col D: no code path ever writes it; hand-maintained.
+        col_d = (provisioned or key in KIT_TRUE_FUTURE) and key not in NO_KIT_PAST
+
+        # ── col P: dual-typed. URL once markGoogleGroupInTracker_ has run,
+        #    boolean False while it is still just the seeded value.
+        if provisioned or key in GROUP_LINK_FUTURE:
+            col_p = group_url(cohort)
+        else:
+            col_p = False
+        # ── col Q: guarded independently of P (`if (meetLink)`), which is why
+        #    the two oldest cohorts are a real group-link-only state.
+        if cohort in ("2026-05-11", "2026-05-25"):
+            col_q = ""
+        elif provisioned or key in GROUP_LINK_FUTURE:
+            col_q = cohort_meet[cohort]
+        else:
+            col_q = ""
+
+        # ── cols T/U: PLAIN TEXT "MMM dd, yyyy", never Date cells.
+        sd = iso_to_date(start_date)
+        if provisioned:
+            col_t = "" if key in NO_OKTA_PAST else fmt_display(sd)
+            col_u = fmt_display(sd - timedelta(days=5))
+        elif key in DEVICE_SHIPPED_FUTURE:
+            col_t = ""
+            col_u = fmt_display(sd - timedelta(days=5))
+        else:
+            col_t = ""
+            col_u = ""
+
+        # ── col A: human-maintained; no code path ever writes a non-empty value.
+        if key in CTA_NO_SHOW:
+            col_a = "No Show"
+        elif key in CTA_RESCHEDULED:
+            col_a = "Rescheduled"
+        elif key in CTA_INVITE_SENT:
+            col_a = "Invite Sent"
+        elif key in CTA_CONFIRMED:
+            col_a = "Confirmed"
+        elif provisioned and key not in CTA_BLANK_PAST:
+            col_a = "Attended"
+        else:
+            col_a = ""
+
+        # ── col N
+        if cohort in BLANK_HRBP_COHORTS or key in BLANK_HRBP_EXTRA:
+            hrbp = ""
+        else:
+            hrbp = HRBP_BY_DEPT[dept]
+
+        rows.append({
+            "cta": col_a, "mgr_dm": col_b, "slack": col_c, "kit": col_d,
+            "first": first, "last": last,
+            "start_date": start_date, "cohort": cohort, "cohort_display": cohort_display,
+            "personal_email": personal_email, "work_email": work_email,
+            "job_title": job_title, "manager_name": manager_name, "manager_email": manager_email,
+            "hrbp": hrbp, "recruiter": recruiter,
+            "group": col_p, "meet": col_q, "location": location,
+            "department": dept, "okta": col_t, "device": col_u,
+        })
+
+    return rows
+
+
+# ─── PRIVACY CHECK ───────────────────────────────────────────────────────────
+def privacy_check(rows, code_gs_path):
+    """Code.gs embeds REAL employee names and real corporate email addresses.
+    Nothing generated here may collide with any of them. Compares full names and
+    all generated email addresses against the raw text of Code.gs."""
+    if not os.path.exists(code_gs_path):
+        return None
+    with open(code_gs_path, "r", encoding="utf-8", errors="replace") as fh:
+        src = fh.read()
+    low = src.lower()
+    collisions = []
+    for r in rows:
+        probes = ["%s %s" % (r["first"], r["last"]), r["manager_name"],
+                  r["work_email"], r["personal_email"], r["manager_email"]]
+        for p in probes:
+            if p and p.lower() in low:
+                collisions.append(p)
+    return sorted(set(collisions))
+
+
+# ─── WRITE THE WORKBOOK ──────────────────────────────────────────────────────
+def write_workbook(rows):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = SHEET_NAME            # a rename here silently yields 16x "0 hires"
+
+    ws.append(HEADER_ROW)            # HEADER ON ROW 1, DATA FROM ROW 2. Exactly one header row.
+
+    for r in rows:
+        # G and H are ALWAYS the string forms, never a date object. openpyxl
+        # writes a str as an inline/shared string cell (data_type "s"), which is
+        # what survives the Google Sheets import as text.
+        ws.append([
+            r["cta"], r["mgr_dm"], r["slack"], r["kit"],
+            r["first"], r["last"], r["start_date"], r["cohort_display"],
+            r["personal_email"], r["work_email"], r["job_title"],
+            r["manager_name"], r["manager_email"], r["hrbp"], r["recruiter"],
+            r["group"], r["meet"], r["location"],
+            r["department"], r["okta"], r["device"],
+        ])
+
+    last_row = ws.max_row
+    n_cols = len(HEADER_ROW)
+
+    # Header presentation
+    for c in range(1, n_cols + 1):
+        cell = ws.cell(row=1, column=c)
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(vertical="center", wrap_text=False)
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = "A1:%s%d" % (get_column_letter(n_cols), last_row)
+
+    # Every date-bearing column is text with the "@" (Text) number format, so
+    # neither Excel nor the Google Sheets importer re-parses it into a Date.
+    # G: isOffCycleStart_ (Code.gs:3558) does an exact === membership test on
+    # String(startDate), and buildDerivedFields_ (:1021) compares col G
+    # lexicographically against COHORT_DATES — both need the ISO literal.
+    # H: Code.gs:747 and :2829 read row[7] with NO `instanceof Date` branch.
+    # T/U: the dashboard's only Date branch on them (Code.gs:3467-3468) merely
+    # prefixes a tick, so text is both the honest and the safer shape.
+    for row_i in range(2, last_row + 1):
+        for col_letter in DATE_COLUMN_LETTERS:
+            ws["%s%d" % (col_letter, row_i)].number_format = "@"
+
+    widths = {
+        "A": 13, "B": 19, "C": 9, "D": 20, "E": 13, "F": 15, "G": 13, "H": 16,
+        "I": 34, "J": 30, "K": 46, "L": 19, "M": 30, "N": 9, "O": 40,
+        "P": 52, "Q": 34, "R": 36, "S": 38, "T": 15, "U": 17,
+    }
+    for col_letter, w in widths.items():
+        ws.column_dimensions[col_letter].width = w
+
+    # Data validation. B/C/D are real checkbox booleans; P is deliberately
+    # EXCLUDED because markGoogleGroupInTracker_ overwrites it with a URL and a
+    # checkbox rule would fight that write.
+    bool_dv = DataValidation(type="list", formula1='"TRUE,FALSE"',
+                             allow_blank=False, showDropDown=False)
+    bool_dv.error = "Use TRUE or FALSE only. The string 'FALSE' is truthy in Apps Script."
+    bool_dv.errorTitle = "Checkbox column"
+    ws.add_data_validation(bool_dv)
+    bool_dv.add("B2:D%d" % last_row)
+
+    cta_list = ",".join(CTA_VALUES)
+    skipped = []
+    # Excel caps an inline list at 255 chars including the wrapping quotes.
+    if len(cta_list) + 2 <= 255:
+        cta_dv = DataValidation(type="list", formula1='"%s"' % cta_list,
+                                allow_blank=True, showDropDown=False)
+        cta_dv.error = "Pick one of the five allowed CTA Status values, or leave blank."
+        cta_dv.errorTitle = "CTA Status"
+        ws.add_data_validation(cta_dv)
+        cta_dv.add("A2:A%d" % last_row)
+    else:
+        skipped.append("CTA Status list (%d chars > 255)" % (len(cta_list) + 2))
+
+    wb.save(OUT_PATH)
+    return last_row, skipped
+
+
+# ─── DOCS ARE GENERATED, NOT HAND-MAINTAINED ────────────────────────────────
+# FIELD_MAP.md and the README stats block used to be written by hand against an
+# older generator (build_dummy_tracker.py, 48 hires, header on row 7, 25 columns
+# A-Y, a CTA vocabulary of "Onboarded / Joined / Welcome Call Sent / Slack
+# Channel Created / Pending / Upcoming"). That generator wrote to the SAME
+# output path as this one, so when this file superseded it the docs silently
+# began describing a workbook that no longer exists: zero of those six CTA
+# values appear in the shipped data, the counts summed to 48 against 44 real
+# rows, and the column table was four columns and six header rows out of date.
+#
+# The fix is structural, not editorial: both documents are now emitted from the
+# same row records the workbook is written from, so they cannot drift again.
+
+FIELD_MAP_PATH = os.path.join(OUT_DIR, "SUPERSEDED_21col_FIELD_MAP.md")
+README_PATH = os.path.join(OUT_DIR, "SUPERSEDED_21col_README.md")
+STATS_BEGIN = "<!-- BEGIN GENERATED STATS -->"
+STATS_END = "<!-- END GENERATED STATS -->"
+
+# (col letter, header, cell type, who reads it, who writes it, value rule)
+COLUMN_DOC = [
+    ("A", "text", "dashboard CTA pill only", "nothing — Code.gs:606/:1099 stamp \"\"",
+     "one of {cta} or blank; 100% human-maintained"),
+    ("B", "bool", "sendManagerDMs_ skip-if-true", "sendManagerDMs_ (Code.gs:2027)",
+     "TRUE for every provisioned cohort except the one S7b row"),
+    ("C", "bool", "markSlackChannelInTracker_ `if (!row[2])`", "Code.gs:2539",
+     "TRUE for provisioned cohorts except Jul 27; one deliberate Sep 21 exception"),
+    ("D", "bool", "dashboard kit pill", "no writer anywhere in Code.gs",
+     "hand-maintained, so legitimately TRUE on future cohorts"),
+    ("E", "text", "every reader; exact-match header (case-sensitive)", "both appenders",
+     "ASCII first token, never blank, globally unique with F"),
+    ("F", "text", "exact-match header (case-sensitive)", "both appenders",
+     "ASCII single-word surname, never blank"),
+    ("G", "text (`@`)", "isOffCycleStart_ `===`, buildDerivedFields_, audit", "both appenders, verbatim",
+     "yyyy-MM-dd; 2 off-cycle rows deviate from their cohort date"),
+    ("H", "text (`@`)", "every scanner + the dashboard cohort key", "both appenders",
+     "MMM dd, yyyy, zero-padded day; one of the 16 legal display strings"),
+    ("I", "text", "isDuplicate_ (strongest dedup key), audit", "append / backfill",
+     "consumer-mailbox shape at " + PERSONAL_DOMAIN + ", globally unique"),
+    ("J", "text", "sendManagerDMs_ row locator; exact-match header", "append / backfill",
+     "byte-identical to buildDerivedFields_ output, at " + EMAIL_DOMAIN),
+    ("K", "text", "audit, deptToFunction_ fallback, role chips", "append", "title case"),
+    ("L", "text", "audit, manager DM grouping key", "append", "exactly 'First Last'"),
+    ("M", "text", "manager DM recipient", "append",
+     "buildDerivedFields_'s manager rule (differs from the col J rule)"),
+    ("N", "text", "dashboard, behind `if (hire.hrbp)`", "nothing — :619/:1112 write \"\"",
+     "display name, assigned by department"),
+    ("O", "text", "parseNoteParts_", "append",
+     "bare name; one legacy 'Dept: X | Recruiter: Y' row, one multi-recruiter row"),
+    ("P", "bool OR url", "dashboard googleGroupDone", "markGoogleGroupInTracker_ (:2380)",
+     "group URL once stamped, boolean FALSE before — never a checkbox"),
+    ("Q", "url", "nothing — write-only human reference", "markGoogleGroupInTracker_ (:2381)",
+     "bare Meet URL, one code per cohort"),
+    ("R", "text", "isUSLocation_, UK_KEYWORDS routing, audit", "append",
+     "'City, State, Country' or 'City, Country'"),
+    ("S", "text", "getDeptCol_ (header text, case-insensitive)", "appended if missing",
+     "free text, consistent with col K"),
+    ("T", "text", "dashboard Okta pill (header text, case-SENSITIVE)", "syncItOnboardingFromSlack",
+     "MMM dd, yyyy"),
+    ("U", "text", "dashboard device pill (header text, case-SENSITIVE)", "syncItOnboardingFromSlack",
+     "MMM dd, yyyy, five days before the joining date"),
+]
+
+
+def _tally(values):
+    out = {}
+    for v in values:
+        out[v] = out.get(v, 0) + 1
+    return out
+
+
+def dataset_stats(rows):
+    cta = _tally([r["cta"] or "(blank)" for r in rows])
+    per_cohort = _tally([r["cohort"] for r in rows])
+    return {
+        "total": len(rows),
+        "cta": cta,
+        "per_cohort": per_cohort,
+        "cohorts_with_rows": len(per_cohort),
+        "non_us": sum(1 for r in rows if r["location"]
+                      and "united states" not in r["location"].lower()
+                      and ", dc" not in r["location"].lower()
+                      and "hawaii" not in r["location"].lower()),
+        "blank_location": sum(1 for r in rows if not r["location"]),
+        "audit_rows": sum(1 for r in rows if r["start_date"] >= TODAY.isoformat()
+                          and not all([r["personal_email"], r["work_email"],
+                                       r["job_title"], r["manager_name"], r["location"]])),
+    }
+
+
+def render_stats_block(rows, stats):
+    cta_line = ", ".join("%s %d" % (k, v) for k, v in sorted(
+        stats["cta"].items(), key=lambda kv: (-kv[1], kv[0])))
+    cohort_line = ", ".join("%s %d" % (fmt_display(iso_to_date(c)), stats["per_cohort"][c])
+                            for c in COHORT_DATES if c in stats["per_cohort"])
+    empty = [c for c in COHORT_DATES if c not in stats["per_cohort"]]
+    lines = [
+        STATS_BEGIN,
+        "<!-- Written by generate_dummy_tracker.py. Do not edit by hand. -->",
+        "",
+        "- **Generator:** `generate_dummy_tracker.py` (fixed seed, \"today\" pinned to %s)."
+        % TODAY.isoformat(),
+        "- **Workbook:** `%s` — one tab, `%s`, header on **row 1**, data from **row 2**, "
+        "columns **A-%s**." % (os.path.basename(OUT_PATH), SHEET_NAME,
+                               get_column_letter(len(HEADER_ROW))),
+        "- **Hires:** **%d** across %d of the %d `CONFIG.COHORT_DATES` "
+        "(the remaining %d render the empty-state card)."
+        % (stats["total"], stats["cohorts_with_rows"], len(COHORT_DATES), len(empty)),
+        "- **Per cohort:** %s." % cohort_line,
+        "- **Col A (CTA Status)** uses exactly this vocabulary and nothing else: %s. "
+        "Counts: %s." % (", ".join("`%s`" % v for v in CTA_VALUES), cta_line),
+        "- **Cols G, H, T and U are 100%% text cells** (number format `@`, `data_type` "
+        "`s`) on all %d rows — zero real date cells anywhere in the workbook. Col G is the "
+        "`yyyy-MM-dd` literal `isOffCycleStart_` membership-tests, col H the zero-padded "
+        "`MMM dd, yyyy` literal every scanner `===`-compares. A single date-typed cell in "
+        "either column would be read back as a JS `Date` and stringify to "
+        "`Mon Sep 21 2026 00:00:00 GMT…`, which matches nothing."
+        % stats["total"],
+        "- **Audit gaps:** %d rows with a joining date on or after %s and at least one of the "
+        "five audited fields empty — those are the only rows `auditTrackerForIssues_` can ever "
+        "report (Code.gs:747 skips everything earlier)."
+        % (stats["audit_rows"], TODAY.isoformat()),
+        "- **Locations:** %d non-US rows plus %d deliberately blank."
+        % (stats["non_us"], stats["blank_location"]),
+        STATS_END,
+    ]
+    return "\n".join(lines)
+
+
+def scanner_calendar(rows):
+    """Replays every scanner branch predicate in Code.gs against COHORT_DATES.
+
+    Returns {iso_date: [(scanner, cohort_iso, description, hire_count), ...]}.
+
+    This exists because all three scanners test `today === <cohort + offset>`
+    with an exact string compare and COHORT_DATES is a fixed literal in Code.gs.
+    The set of dates on which ANY automation fires is therefore fully known at
+    generate time, and the pinned demo "today" of 2026-09-11 is NOT one of them:
+    it sits at cohort+3 relative to 2026-09-08, and no branch exists at +3.
+    That cannot be fixed in the sheet — the cohort plan is spec-mandated and
+    COHORT_DATES is not ours to move — so the generator's job is to publish the
+    dates that DO fire, rather than let a demo be driven from a silent one.
+    """
+    counts = {}
+    for r in rows:
+        counts[r["cohort"]] = counts.get(r["cohort"], 0) + 1
+    fires = {}
+    for c in COHORT_DATES:
+        cd = iso_to_date(c)
+        for off, scanner, what in SCANNER_BRANCHES:
+            fires.setdefault((cd + timedelta(days=off)).isoformat(), []).append(
+                (scanner, c, what, counts.get(c, 0)))
+    return fires
+
+
+def render_scanner_section(rows, stats):
+    """The generated '§5 Demo clock' block. Everything here is computed, never
+    asserted by hand — the offsets come from SCANNER_BRANCHES, the cohorts from
+    COHORT_DATES and the hire counts from the rows actually written."""
+    fires = scanner_calendar(rows)
+    today = TODAY.isoformat()
+    out = []
+    out.append("## 5. Demo clock — which dates actually fire an automation")
+    out.append("")
+    out.append("`dailyScanner`, `mondayScanner` and `fridayAfternoonScanner` all iterate "
+               "`CONFIG.COHORT_DATES` and compare `today` against a fixed offset with an "
+               "exact `===`. A branch therefore fires on exactly one calendar date per "
+               "cohort and on no other date. The branches are:")
+    out.append("")
+    out.append("| Offset | Scanner | Fires |")
+    out.append("|---|---|---|")
+    for off, scanner, what in SCANNER_BRANCHES:
+        label = "cohort%+d" % off if off else "cohort day"
+        out.append("| `%s` | `%s` | %s |" % (label, scanner, what))
+    out.append("")
+    if today in fires:
+        out.append("On the pinned **%s** the following fire: %s."
+                   % (today, ", ".join("`%s` for %s" % (s, c) for s, c, _w, _n in fires[today])))
+    else:
+        nearest = sorted(fires)
+        prev = [d for d in nearest if d < today]
+        nxt = [d for d in nearest if d > today]
+        out.append("> **The pinned demo date %s fires nothing.** It is `cohort+3` relative "
+                   "to 2026-09-08 and there is no `+3` branch; the cohort dates implied by "
+                   "the branches above (%s) are none of the 16 `COHORT_DATES`. A demo run "
+                   "on \"today\" produces zero scanner output and reads as a dead system. "
+                   "This is not a data fault and cannot be fixed in the sheet — "
+                   "`COHORT_DATES` is a fixed literal in `Code.gs`. Drive the demo from one "
+                   "of the dates below instead (previous firing date %s, next %s)."
+                   % (today,
+                      ", ".join(sorted({(TODAY - timedelta(days=off)).isoformat()
+                                        for off, _s, _w in SCANNER_BRANCHES})),
+                      prev[-1] if prev else "none", nxt[0] if nxt else "none"))
+    out.append("")
+    out.append("Recommended demo dates, in order — each one fires a real branch against a "
+               "cohort that has rows in this workbook:")
+    out.append("")
+    out.append("| Simulate `today` = | Weekday | Scanner | Cohort | Hires | What you get |")
+    out.append("|---|---|---|---|---|---|")
+    window = [d for d in sorted(fires)
+              if today <= d <= (TODAY + timedelta(days=21)).isoformat()]
+    for d in window:
+        wd = iso_to_date(d).strftime("%a")
+        for scanner, cohort, what, n in fires[d]:
+            if n == 0:
+                what += " (empty cohort — the \"no hires found in tracker\" branch)"
+            out.append("| `%s` | %s | `%s` | %s | %d | %s |"
+                       % (d, wd, scanner, fmt_display(iso_to_date(cohort)), n, what))
+    out.append("")
+    mism = trigger_weekday_mismatches()
+    if mism:
+        out.append("")
+        out.append("### 5b. Cohorts whose Friday work can never run "
+                   "(pre-existing `Code.gs` weakness, NOT a data fault)")
+        out.append("")
+        out.append("`dailyScanner` derives the Thursday notice and the Friday setup from "
+                   "FIXED offsets — `thursdayDate = addDays_(cohort, -4)` and "
+                   "`fridayDate = addDays_(cohort, -3)` (Code.gs:1268-1270) — while "
+                   "`fridayAfternoonScanner` is trigger-bound to **Fridays 12 PM PT** "
+                   "(Code.gs:2419-2424) *and* additionally gates on "
+                   "`today !== addDays_(cohortDate, -3)`. For any cohort that does not "
+                   "fall on a Monday the two can never coincide, so that cohort gets no "
+                   "Slack channel, no Google group and no `notifyNonUSHires_` call.")
+        out.append("")
+        out.append("| Cohort | Weekday | `cohort-3` resolves to | Weekday | Hires in this workbook |")
+        out.append("|---|---|---|---|---|")
+        for c, cwd, f, fwd in mism:
+            out.append("| `%s` | %s | `%s` | **%s** | %d |"
+                       % (c, cwd, f, fwd, stats["per_cohort"].get(c, 0)))
+        out.append("")
+        out.append("The %s cohort is the live one: it is a Tuesday because Labor Day "
+                   "(`2026-09-07`, present in `CONFIG.US_HOLIDAYS_2026`) shifted it, but "
+                   "`isUSHoliday_(\"%s\")` is **false** — the holiday date itself is in the "
+                   "list, the shifted cohort date is not — so the holiday branch at "
+                   "Code.gs:1275 never fires either. Fix belongs in `Code.gs`: derive "
+                   "Thursday/Friday from the preceding weekday instead of a fixed -4/-3, "
+                   "or add a holiday-shift exceptions map. Do **not** move the cohort date "
+                   "— `CONFIG.COHORT_DATES` is a fixed literal."
+                   % (mism[0][0], mism[0][0]))
+        out.append("")
+    out.append("Only the unconditional tail of `fridayAfternoonScanner` "
+               "(`checkGmailForHRReport` plus the +4h/+8h retry triggers) runs on a date "
+               "with no matching branch, so an untimed demo shows Gmail polling and nothing "
+               "else. Note `fridayAfternoonScanner` is also the only caller of "
+               "`notifyNonUSHires_` (Code.gs:2116) and only ever at `cohort-3`: a **past** "
+               "cohort can never raise a non-US alert, whatever its locations say.")
+    return "\n".join(out)
+
+
+def write_field_map(rows, stats):
+    legal_h = [fmt_display(iso_to_date(c)) for c in COHORT_DATES]
+    out = []
+    out.append("# Onboarding Demo Tracker — Column & Automation Map")
+    out.append("")
+    out.append("> Generated by `generate_dummy_tracker.py`. **Do not edit by hand** — "
+               "re-run the generator instead. Every number below is counted from the rows "
+               "that were actually written to `%s`." % os.path.basename(OUT_PATH))
+    out.append("")
+    out.append("Automation contract source of truth: `Code.gs` (the deployed Onboarding Apps "
+               "Script). Structure was read from the live tracker; **no real employee, "
+               "manager, recruiter or HRBP data was carried across.**")
+    out.append("")
+    out.append("---")
+    out.append("")
+    out.append("## 1. Columns (tab `%s`)" % SHEET_NAME)
+    out.append("")
+    out.append("Header on **row 1**, data from **row 2**, exactly one header row and no "
+               "preamble block. Every consumer loops `for (var i = 1; i < values.length; i++)` "
+               "and `getDeptCol_` reads only `getRange(1, 1, 1, lastCol)`.")
+    out.append("")
+    out.append("| Col | Idx | Header (exact) | Cell type | Read by | Written by | Value rule |")
+    out.append("|---|---|---|---|---|---|---|")
+    for i, (letter, ctype, readby, writtenby, rule) in enumerate(COLUMN_DOC):
+        rule = rule.replace("{cta}", "/".join(CTA_VALUES))
+        out.append("| %s | %d | `%s` | %s | %s | %s | %s |"
+                   % (letter, i, HEADER_ROW[i], ctype, readby, writtenby, rule))
+    out.append("")
+    out.append("Columns **A-R are addressed purely by hard-coded index** (`row[0]`..`row[17]`). "
+               "Only `Department`, `Okta Activated` and `Device Ship Date` are located by "
+               "header text. New columns go to the far right, never between A and R.")
+    out.append("")
+    out.append("---")
+    out.append("")
+    out.append("## 2. Exact-match header contracts")
+    out.append("")
+    out.append("| Header | Matching | Consequence of a rename |")
+    out.append("|---|---|---|")
+    out.append("| `First Name` | case-SENSITIVE | `Error(\"Header row not found.\")` |")
+    out.append("| `Last Name` | case-SENSITIVE | index -1, Okta/device sync reads `undefined` |")
+    out.append("| `Work Email` | case-SENSITIVE | index -1 |")
+    out.append("| `Department` | case-insensitive, trimmed, row 1 only | "
+               "`getDeptCol_` returns -1 and APPENDS a second Department column at the far "
+               "right, so reads and writes land in different columns |")
+    out.append("| `Okta Activated` | case-SENSITIVE | Okta pill grey on 100% of hires |")
+    out.append("| `Device Ship Date` | case-SENSITIVE | \"No Device Yet\" lists every hire |")
+    out.append("")
+    out.append("---")
+    out.append("")
+    out.append("## 3. What must not change")
+    out.append("")
+    out.append("1. **Tab name** `%s` — `getSheetByName` returns null on a rename and "
+               "`getDashboardData` just `return`s, producing 16 buttons all reading "
+               "\"0 hires\" with no error." % SHEET_NAME)
+    out.append("2. **Header on row 1, data from row 2.** One header row, no banner block.")
+    out.append("3. **Column order A-R.** Positional. Never insert or reorder.")
+    out.append("4. **Col H must parse to one of the 16 seeded keys.** The legal display "
+               "strings are exactly: %s. A zero-padded day is mandatory — `Sep 8, 2026` "
+               "returns zero hires from every scanner while still rendering on the "
+               "dashboard." % ", ".join("`%s`" % v for v in legal_h))
+    out.append("5. **Cols B, C and D are real booleans.** The STRING `\"FALSE\"` is truthy, "
+               "and `markSlackChannelInTracker_` gates on bare truthiness (`if (!row[2])`), "
+               "so a string there permanently blocks the row from ever being marked while "
+               "the dashboard still shows it grey.")
+    out.append("6. **No checkbox validation on col P.** It is dual-typed: seeded boolean "
+               "`false`, then overwritten with a group URL by `markGoogleGroupInTracker_`.")
+    out.append("7. **No apostrophes, angle brackets or double quotes** in any name, job "
+               "title, location or email — every field is concatenated into the dashboard's "
+               "HTML unescaped and the emails are interpolated inside single-quoted "
+               "`onclick` handlers.")
+    out.append("8. **First + last unique across all %d rows.** The dashboard drops the "
+               "second of any duplicate pair inside a cohort key." % stats["total"])
+    out.append("")
+    out.append("---")
+    out.append("")
+    out.append("## 4. Before pointing any automation at this data")
+    out.append("")
+    out.append("Repointing `CONFIG.SPREADSHEET_ID` alone is **not sufficient**. Two further "
+               "spreadsheet IDs are hard-coded outside `CONFIG` and are not reachable from "
+               "it:")
+    out.append("")
+    out.append("| In `Code.gs` | Change to |")
+    out.append("|---|---|")
+    out.append("| `CONFIG.SPREADSHEET_ID` | the id of the sheet this workbook was loaded into |")
+    out.append("| `getArchiveHires_()` — local `ARCHIVE_ID` | stub the function to `return [];`, "
+               "or promote the id into `CONFIG` and blank it. Otherwise the archive merge "
+               "collapses every real archived hire onto a cohort button and puts real "
+               "names on screen. |")
+    out.append("| `getPilotNames_()` — local `PILOT_SHEET_ID` | stub to `return {};` |")
+    out.append("| `CONFIG.BETA_CHANNEL`, `CONFIG.NON_US_CHANNEL`, the notify tags | "
+               "throwaway test channels and ids |")
+    out.append("| Slack member lists and group-member addresses | demo addresses |")
+    out.append("| Gmail and daily triggers | **do not install** on the demo copy |")
+    out.append("")
+    out.append("After repointing, confirm the dashboard total reads exactly **%d**. Any "
+               "other number means one of the two extra spreadsheets is still being merged "
+               "in." % stats["total"])
+    out.append("")
+    out.append("---")
+    out.append("")
+    out.append(render_scanner_section(rows, stats))
+    out.append("")
+    out.append("---")
+    out.append("")
+    out.append("## 6. Owner actions — `Code.gs` / dashboard findings this fixture "
+               "exposes but deliberately does NOT work around")
+    out.append("")
+    out.append("Each of these is a defect in the automation, not in the data. The fixture "
+               "is written to the documented contract; these are the places where the code "
+               "does not hold up its end.")
+    out.append("")
+    out.append("| # | Where | Problem | Fix |")
+    out.append("|---|---|---|---|")
+    out.append("| 1 | `auditTrackerForIssues_`, Code.gs:747 | "
+               "`var cohort = String(row[7] || \"\").trim();` has **no** `instanceof Date` "
+               "branch, unlike :1406, :2375, :2534 and :3249 which all guard the same "
+               "`row[7]`. If a human ever types a date into col H, the Slack audit line "
+               "prints `cohort Mon Sep 21 2026 00:00:00 GMT+0530 (...)`. | Use the guarded "
+               "pattern already in the file: "
+               "`(row[7] instanceof Date) ? Utilities.formatDate(row[7], CONFIG.TIMEZONE, "
+               "\"MMM dd, yyyy\") : String(row[7]).trim()`. |")
+    out.append("| 2 | `fixCohortDateFormat()`, Code.gs:2829 | Same unguarded read. Its "
+               "`/^\\d{4}-\\d{2}-\\d{2}$/` test can never match a stringified `Date`, so the "
+               "utility written to repair col H silently skips exactly the cells that are "
+               "broken and logs `0 cell(s) fixed`. | Same `instanceof Date` guard, plus "
+               "rewrite a date-typed cell back to the text form. |")
+    for i, (c, cwd, f, fwd) in enumerate(trigger_weekday_mismatches()):
+        out.append("| %d | `dailyScanner` :1268-1270 + `fridayAfternoonScanner` :2068/:2419 | "
+                   "Cohort `%s` is a **%s**, so `cohort-3` lands on %s (`%s`) and the "
+                   "Friday-bound trigger can never match it — no Slack channel, no Google "
+                   "group, no non-US notification for its %d hire(s). | Derive the "
+                   "Thursday/Friday dates from the preceding weekday, or add a "
+                   "holiday-shift exceptions map. |"
+                   % (3 + i, c, cwd, fwd, f, stats["per_cohort"].get(c, 0)))
+    n = 3 + len(trigger_weekday_mismatches())
+    out.append("| %d | `doGet()`, Code.gs:3363-3367 | The web app serves "
+               "`HtmlService.createHtmlOutput(getDashboardHtml_())` — a string literal "
+               "embedded in `Code.gs`. `createHtmlOutputFromFile` appears **nowhere** in the "
+               "file, so any standalone `Dashboard.html` in the project is dead code unless "
+               "`doGet` is rewired. Reviewing one file while demoing the other is how cols "
+               "S/T/U (Department, Okta Activated, Device Ship Date) end up looking like "
+               "dead data. | Pick one. Either point `doGet` at the file with "
+               "`createHtmlOutputFromFile('Dashboard')` and port the analytics / function-nav "
+               "/ Okta / device code into it, or drop the standalone file and treat "
+               "`getDashboardHtml_()` as the only dashboard. |" % n)
+    out.append("| %d | any standalone `Dashboard.html` still using a two-letter "
+               "`US_ABBREVS` list | The abbreviations are matched with a bare "
+               "`l.indexOf(', ca')`-style substring test, so `, canada` matches `, ca`, "
+               "`, netherlands` matches `, ne` and `, india` matches `, in`. Genuinely "
+               "non-US hires then render a US flag and vanish from the "
+               "\"Non-US Hires — IT Setup Required\" panel. The deployed `isUSLoc_` has no "
+               "abbreviation list and is correct. | Delete the abbreviation block (the "
+               "full state-name loop already covers every US row in this dataset), or "
+               "anchor it as `/,\\s(al|ak|...)\\s*$/`. |" % (n + 1))
+    out.append("")
+    out.append("---")
+    out.append("")
+    out.append("## 7. Dataset summary")
+    out.append("")
+    out.append(render_stats_block(rows, stats))
+    out.append("")
+    with open(FIELD_MAP_PATH, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(out))
+
+
+def update_readme_stats(rows, stats):
+    """Replace the generated block in README.md, leaving the hand-written parts
+    (the seeder runbook) alone. Fails loudly if the markers are missing rather
+    than silently letting the README drift out of sync again."""
+    block = render_stats_block(rows, stats)
+    if not os.path.exists(README_PATH):
+        raise SystemExit("ABORT: README.md is missing; cannot refresh its stats block.")
+    with open(README_PATH, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    if STATS_BEGIN not in text or STATS_END not in text:
+        raise SystemExit(
+            "ABORT: README.md has no %s / %s markers. Add them where the dataset "
+            "claims belong — hand-written counts are exactly how the docs drifted "
+            "out of sync with the data last time." % (STATS_BEGIN, STATS_END))
+    head, rest = text.split(STATS_BEGIN, 1)
+    _, tail = rest.split(STATS_END, 1)
+    with open(README_PATH, "w", encoding="utf-8") as fh:
+        fh.write(head + block + tail)
+
+
+def guard_docs_vocabulary(rows):
+    """The docs must not name a col A value the data does not contain, and must
+    not omit one it does. This is the check that would have caught the six
+    phantom CTA states the old hand-written docs advertised."""
+    used = {r["cta"] for r in rows if r["cta"]}
+    illegal = used - set(CTA_VALUES)
+    if illegal:
+        raise ValueError("Col A values outside the declared vocabulary: %s" % sorted(illegal))
+    for path in (FIELD_MAP_PATH, README_PATH):
+        if not os.path.exists(path):
+            continue
+        with open(path, "r", encoding="utf-8") as fh:
+            txt = fh.read()
+        for phantom in ("Welcome Call Sent", "Slack Channel Created", "Onboarded"):
+            if phantom in txt:
+                raise ValueError(
+                    "%s still advertises the col A value %r, which appears in zero rows "
+                    "of the generated data." % (os.path.basename(path), phantom))
+
+
+def guard_date_text_only(path):
+    """Re-open the workbook that was just written and assert that not one cell
+    in G, H, T or U is a real date cell.
+
+    This is checked against the FILE rather than against the in-memory rows
+    because that is where the previous revision went wrong: the row dicts held
+    correct strings while the writer converted 5 of them to date objects, so an
+    in-memory assertion would have passed on a broken workbook."""
+    import openpyxl
+    wb = openpyxl.load_workbook(path)
+    ws = wb[SHEET_NAME]
+    bad = []
+    for row_i in range(2, ws.max_row + 1):
+        for col_letter in DATE_COLUMN_LETTERS:
+            cell = ws["%s%d" % (col_letter, row_i)]
+            if cell.value is None:
+                continue
+            if cell.data_type != "s" or not isinstance(cell.value, str):
+                bad.append("%s%d is data_type %r (%r)"
+                           % (col_letter, row_i, cell.data_type, cell.value))
+            elif cell.number_format != "@":
+                bad.append("%s%d number_format is %r, not '@'"
+                           % (col_letter, row_i, cell.number_format))
+        g = ws["G%d" % row_i].value
+        h = ws["H%d" % row_i].value
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(g or "")):
+            bad.append("G%d is %r, not yyyy-MM-dd" % (row_i, g))
+        if str(h or "") not in LEGAL_H_DISPLAY:
+            bad.append("H%d is %r, not one of the 16 legal display strings" % (row_i, h))
+    if bad:
+        raise ValueError("Date columns must be uniform text:\n  " + "\n  ".join(bad[:20]))
+    return ws.max_row - 1
+
+
+def trigger_weekday_mismatches():
+    """Code.gs derives the Thursday notice and the Friday setup from FIXED
+    offsets (cohort-4 and cohort-3, Code.gs:1268-1270) while the triggers that
+    call them are bound to real weekdays (fridayAfternoonScanner is installed on
+    Fridays 12 PM PT, Code.gs:2419-2424, and additionally gates on
+    `today !== addDays_(cohortDate, -3)`). For any cohort that is not a Monday
+    the two can never coincide, so that cohort silently gets no Friday Slack
+    channel, no Google group and no non-US notification.
+
+    Returns [(cohort_iso, cohort_weekday, minus3_iso, minus3_weekday), ...] for
+    every cohort where cohort-3 is not a Friday. Reported in FIELD_MAP §5; NOT
+    worked around in the data, because COHORT_DATES is a fixed literal in
+    Code.gs and the cohort plan is spec-mandated."""
+    out = []
+    for c in COHORT_DATES:
+        cd = iso_to_date(c)
+        f = cd - timedelta(days=3)
+        if f.weekday() != 4:              # 4 = Friday
+            out.append((c, cd.strftime("%a"), f.isoformat(), f.strftime("%a")))
+    return out
+
+
+def guard_demo_clock(rows):
+    """The generated demo-clock table must never be empty. If the cohort plan
+    ever changes so that no scanner branch fires within three weeks of the
+    pinned TODAY, the docs would silently publish an empty table and the demo
+    would be driven from a date on which nothing happens."""
+    fires = scanner_calendar(rows)
+    counts = {}
+    for r in rows:
+        counts[r["cohort"]] = counts.get(r["cohort"], 0) + 1
+    window = [d for d in sorted(fires)
+              if TODAY.isoformat() <= d <= (TODAY + timedelta(days=21)).isoformat()]
+    if not window:
+        raise ValueError("No scanner branch fires within 21 days of the pinned TODAY "
+                         "(%s); the demo clock section would be empty." % TODAY.isoformat())
+    if not any(n > 0 for d in window for (_s, _c, _w, n) in fires[d]):
+        raise ValueError("Every scanner branch in the demo window targets a cohort with "
+                         "zero rows; the demo would only ever show the empty-cohort branch.")
+    return window
+
+
+def main():
+    rows = build_rows()
+
+    guard_text_fields(rows)
+    guard_locations(rows)
+    guard_cohort_contract(rows)
+    demo_dates = guard_demo_clock(rows)
+
+    assert len(rows) == 44, "expected 44 hires, got %d" % len(rows)
+    names = [(r["first"], r["last"]) for r in rows]
+    assert len(set(names)) == 44, "first+last must be globally unique"
+    emails = [r["work_email"] for r in rows if r["work_email"]]
+    assert len(set(emails)) == len(emails), "work emails must be unique"
+    pers = [r["personal_email"] for r in rows if r["personal_email"]]
+    assert len(set(pers)) == len(pers), "personal emails must be unique"
+
+    code_gs = "/Users/azilen/.claude/jobs/135970dc/tmp/Code.gs"
+    collisions = privacy_check(rows, code_gs)
+
+    last_row, skipped = write_workbook(rows)
+    # Read the workbook back off disk and re-assert the text-cell contract on
+    # the bytes that were actually written, not on the in-memory rows.
+    n_checked = guard_date_text_only(OUT_PATH)
+
+    stats = dataset_stats(rows)
+    write_field_map(rows, stats)
+    update_readme_stats(rows, stats)
+    guard_docs_vocabulary(rows)
+
+    print("Wrote %s" % OUT_PATH)
+    print("  sheet            : %s" % SHEET_NAME)
+    print("  data rows        : %d (rows 2..%d)" % (len(rows), last_row))
+    print("  columns          : %d (A..%s)" % (len(HEADER_ROW),
+                                               get_column_letter(len(HEADER_ROW))))
+    if collisions is None:
+        print("  privacy check    : SKIPPED (Code.gs not readable)")
+    else:
+        print("  privacy check    : %d collisions with Code.gs text" % len(collisions))
+        if collisions:
+            raise SystemExit("ABORT: generated identity collides with Code.gs content.")
+    print("  date cells       : none — G/H/T/U verified text ('@', data_type 's') on "
+          "all %d data rows, read back off disk" % n_checked)
+    print("  col A vocabulary : %s"
+          % ", ".join("%s=%d" % (k, v) for k, v in sorted(stats["cta"].items())))
+    print("  docs regenerated : %s, %s stats block"
+          % (os.path.basename(FIELD_MAP_PATH), os.path.basename(README_PATH)))
+    print("  demo clock       : the pinned today (%s) fires NO scanner branch (it is "
+          "cohort+3 of 2026-09-08 and no +3 branch exists). Drive the demo from %s — "
+          "see FIELD_MAP.md section 5."
+          % (TODAY.isoformat(), ", ".join(demo_dates[:3])))
+    mism = trigger_weekday_mismatches()
+    print("  OWNER ACTIONS    : %d Code.gs findings this dataset exposes but does NOT "
+          "work around — see FIELD_MAP.md §6 (unguarded row[7] reads at :747 and :2829; "
+          "%d cohort(s) whose cohort-3 is not a Friday, e.g. %s)."
+          % (2 + len(mism), len(mism),
+             ", ".join("%s→%s" % (c, w) for c, _cw, _f, w in mism) or "none"))
+    for s in skipped:
+        print("  NOTE skipped DV  : %s" % s)
+
+
+if __name__ == "__main__":
+    main()

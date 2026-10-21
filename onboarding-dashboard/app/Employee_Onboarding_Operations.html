@@ -429,7 +429,7 @@ a:hover{text-decoration:underline}
 .role-chips{display:flex;gap:5px;flex-wrap:wrap}
 
 /* Charts */
-.chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(390px,1fr));gap:14px}
+.chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(390px,100%),1fr));gap:14px}.chart-grid>*{min-width:0}
 .hbar-row{display:grid;grid-template-columns:132px 1fr;align-items:center;gap:12px;padding:3px 0}
 .hbar-label{
   font-size:12px;color:var(--ink-2);text-align:right;

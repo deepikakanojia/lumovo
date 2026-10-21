@@ -444,7 +444,7 @@ def main():
     }
 
     body = json.dumps(payload, indent=1, ensure_ascii=False)
-    with open(OUT, "w") as f:
+    with open(OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write("// GENERATED FILE — do not edit by hand.\n")
         f.write("// Rebuild with:  python3 build_nho_data.py\n")
         f.write("// Source: NHO_Tracker_Dummy_Data.xlsx + NHO_Dummy_Extensions.xlsx\n")

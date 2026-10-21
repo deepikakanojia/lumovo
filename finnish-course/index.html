@@ -1,0 +1,67 @@
+<!-- Status: DRAFT -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Arrival: your first hour in Finland</title>
+<meta name="description" content="A playable first hour in Finland by Lumovo: land in Helsinki, get to the city and buy a water, all in Finnish.">
+<meta name="theme-color" content="#0d1838">
+<link rel="stylesheet" href="assets/css/game.css">
+<script src="assets/js/journey.js" defer></script>
+<script src="assets/js/art.js" defer></script>
+<script src="assets/js/game.js" defer></script>
+</head>
+<body class="game-body">
+
+<noscript>
+  <div class="noscript">
+    <h1>Your first hour in Finland</h1>
+    <p>The interactive game needs JavaScript. You can read the <a href="guide.html">text version</a> instead.</p>
+  </div>
+</noscript>
+
+<div class="game" id="game">
+  <header class="hud" id="hud">
+    <ol class="map" id="map" aria-label="Journey map"></ol>
+    <div class="hud-right">
+      <span class="xp-pill" id="xp-pill" title="Experience points"><span aria-hidden="true">⭐</span> <span id="xp">0 XP</span></span>
+      <button type="button" class="hud-btn deck-btn" id="deck-btn" aria-expanded="false" aria-controls="deck" aria-label="Word deck">
+        <span aria-hidden="true">🃏</span><span class="badge" id="deck-count">0</span>
+      </button>
+      <button type="button" class="hud-btn hard-btn" id="hard-btn" aria-pressed="false" title="Hard mode: hides English, double XP" aria-label="Hard mode">
+        <span aria-hidden="true">🔥</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="play" id="play" data-kind="start">
+    <div class="stage-wrap">
+      <div class="stage" id="stage" role="group" aria-label="Scene"></div>
+      <div class="fx" id="fx"></div>
+    </div>
+    <section class="panel" id="panel" tabindex="-1" aria-label="Dialogue">
+      <div id="panel-body"></div>
+    </section>
+  </main>
+</div>
+
+<div class="sr-only" id="announce" role="status" aria-live="polite"></div>
+
+<div class="doors doors--glass" id="doors" hidden aria-hidden="true">
+  <div class="door door-l"></div>
+  <div class="door door-r"></div>
+</div>
+
+<div class="deck-backdrop" id="deck-backdrop" hidden></div>
+<aside class="deck" id="deck" hidden aria-label="Word deck">
+  <div class="deck-head">
+    <h2>Word deck <span class="deck-n" id="deck-title-count">0 / 0</span></h2>
+    <button type="button" class="hud-btn" id="deck-close" aria-label="Close word deck">✕</button>
+  </div>
+  <ul class="deck-grid" id="deck-grid"></ul>
+  <p class="deck-foot"><span class="check-badge">CHECK</span> = still being verified by a native speaker.</p>
+</aside>
+
+</body>
+</html>
